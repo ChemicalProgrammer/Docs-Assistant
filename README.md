@@ -1,4 +1,4 @@
-# Docs Assistant v0.1.0
+# Docs Assistant v0.2.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -32,3 +32,12 @@ Open Settings from the add-on menu or sidebar. The key is stored with:
 PropertiesService.getUserProperties()
 
 It is not written into the document or source code.
+
+
+## v0.2.0 UI
+- Workspace-inspired card UI and gradient Gemini accent.
+- Global execution lock: only one task can run at a time.
+- All controls disabled during server/Gemini operations.
+- Animated busy overlay and active-button shimmer.
+- Success/error micro-interactions.
+- Reduced-motion accessibility support.
