@@ -1,0 +1,48 @@
+<script>
+let ctx = {};
+function showTab(name){
+  document.getElementById('formatPanel').classList.toggle('hidden', name !== 'format');
+  document.getElementById('geminiPanel').classList.toggle('hidden', name !== 'gemini');
+  document.getElementById('tabFormat').classList.toggle('active', name === 'format');
+  document.getElementById('tabGemini').classList.toggle('active', name === 'gemini');
+  refreshContext();
+}
+function status(msg){document.getElementById('status').textContent=msg||''}
+function fail(e){status(e.message || String(e))}
+function refreshContext(){
+  google.script.run.withSuccessHandler(c=>{
+    ctx=c;
+    const msg=c.hasSelection ? `Selection · ${c.wordCount} words` :
+      (c.hasCursor ? 'Insertion point · no text selected' : 'Click in the document to establish context');
+    document.getElementById('selectionContext').textContent=msg;
+    document.getElementById('geminiContext').textContent=msg;
+    document.getElementById('replaceBtn').disabled=!c.hasSelection;
+  }).withFailureHandler(fail).getDocumentContext();
+}
+function styleText(s){google.script.run.withSuccessHandler(refreshContext).withFailureHandler(fail).applyNamedStyle(s)}
+function spacing(b,a,l){google.script.run.withSuccessHandler(()=>status('Paragraph spacing applied.')).withFailureHandler(fail).setParagraphSpacing(b,a,l)}
+function keepNext(){google.script.run.withSuccessHandler(()=>status('Keep with next applied.')).withFailureHandler(fail).setKeepWithNext(true)}
+function list(t){const c=document.getElementById('continueNumbering').checked;google.script.run.withSuccessHandler(()=>status('List applied.')).withFailureHandler(fail).applyListPreset(t,c)}
+function addBreak(){const k=document.getElementById('breakKind').value;google.script.run.withSuccessHandler(()=>status('Break inserted.')).withFailureHandler(fail).insertBreak(k)}
+function askGemini(){
+  status('Working…');
+  google.script.run.withSuccessHandler(showResult).withFailureHandler(fail)
+    .processWithGemini(document.getElementById('instruction').value,document.getElementById('rawText').value);
+}
+function quick(a){
+  status('Working…');
+  google.script.run.withSuccessHandler(showResult).withFailureHandler(fail)
+    .quickGeminiAction(a,document.getElementById('rawText').value);
+}
+function showResult(t){
+  document.getElementById('result').value=t;
+  document.getElementById('resultBox').classList.remove('hidden');
+  status('Preview ready.');
+}
+function applyResult(mode){
+  google.script.run.withSuccessHandler(()=>{status('Applied to document.');refreshContext()})
+    .withFailureHandler(fail).insertGeminiResult(document.getElementById('result').value,mode);
+}
+function openSettings(){google.script.run.showSettings()}
+refreshContext();
+</script>

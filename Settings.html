@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <?!= include('Styles'); ?>
+</head>
+<body>
+<div class="settings">
+  <h2>Settings</h2>
+  <p class="muted">Gemini API key is stored in your Apps Script user properties, separately for each user.</p>
+  <label>Gemini API key</label>
+  <input id="apiKey" type="password" placeholder="Paste API key">
+  <div id="currentKey" class="muted"></div>
+  <div class="row">
+    <button class="primary" onclick="save()">Save</button>
+    <button onclick="removeKey()">Remove key</button>
+  </div>
+  <div id="settingsStatus"></div>
+</div>
+<script>
+function load() {
+  google.script.run.withSuccessHandler(v => {
+    document.getElementById('currentKey').textContent = v ? 'Current: ' + v : 'No API key configured.';
+  }).getMaskedGeminiApiKey();
+}
+function save() {
+  const key = document.getElementById('apiKey').value;
+  google.script.run.withSuccessHandler(() => {
+    document.getElementById('settingsStatus').textContent = 'Saved.';
+    document.getElementById('apiKey').value = '';
+    load();
+  }).withFailureHandler(e => document.getElementById('settingsStatus').textContent = e.message)
+    .saveGeminiApiKey(key);
+}
+function removeKey() {
+  google.script.run.withSuccessHandler(() => {
+    document.getElementById('settingsStatus').textContent = 'API key removed.';
+    load();
+  }).deleteGeminiApiKey();
+}
+load();
+</script>
+</body>
+</html>
