@@ -56,6 +56,11 @@ function spacing(b,a,l,e){runServer(e.currentTarget,'Formatting…','setParagrap
 function keepNext(e){runServer(e.currentTarget,'Applying…','setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'Applying…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
 function addBreak(e){runServer(e.currentTarget,'Inserting…','insertBreak',[document.getElementById('breakKind').value],'Break inserted')}
+function smartApply(e){
+ const text=document.getElementById('rawText').value.trim();
+ if(!text){status('Paste content first.');return;}
+ runServer(e.currentTarget,'Structuring…','smartApplyGeminiContent',[text],'Content formatted and applied');
+}
 function askGemini(e){
  if(!beginTask(e.currentTarget,'Generating…'))return;
  google.script.run.withSuccessHandler(t=>{showResult(t);endTask(true,'Preview ready')}).withFailureHandler(fail)

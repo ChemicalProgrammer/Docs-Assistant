@@ -1,4 +1,4 @@
-# Docs Assistant v0.3.0
+# Docs Assistant v0.4.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -50,3 +50,9 @@ It is not written into the document or source code.
 - Colored functional button families.
 - Colored white-text tabs for Formatting and Gemini.
 - Inline spinner, shimmer, Done/Error feedback in active button.
+
+
+## v0.4.0
+- Smart Insert / Replace: pasted text is semantically classified by Gemini and applied with native Docs headings, normal paragraphs, lists, and tables.
+- Selection automatically means replace; otherwise cursor means insert. No instruction is required.
+- Settings dialog redesigned to match sidebar styling, colors and button execution animations.

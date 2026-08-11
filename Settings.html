@@ -1,44 +1,46 @@
 <!DOCTYPE html>
 <html>
-<head>
-  <base target="_top">
-  <?!= include('Styles'); ?>
-</head>
+<head><base target="_top"><?!= include('Styles'); ?></head>
 <body>
 <div class="settings">
-  <h2>Settings</h2>
-  <p class="muted">Gemini API key is stored in your Apps Script user properties, separately for each user.</p>
-  <label>Gemini API key</label>
-  <input id="apiKey" type="password" placeholder="Paste API key">
-  <div id="currentKey" class="muted"></div>
-  <div class="row">
-    <button class="primary" onclick="save()">Save</button>
-    <button onclick="removeKey()">Remove key</button>
+  <div class="settingsHeader">
+    <div class="brandmark">✦</div>
+    <div><h2>Settings</h2><div class="subtitle">Docs Assistant · Gemini configuration</div></div>
   </div>
-  <div id="settingsStatus"></div>
+  <div class="settingsCard">
+    <div class="muted">Your Gemini API key is stored separately for your user account in Apps Script User Properties.</div>
+    <label>GEMINI API KEY</label>
+    <input id="apiKey" type="password" placeholder="Paste Gemini API key">
+    <div id="currentKey" class="muted"></div>
+    <div class="row">
+      <button id="saveBtn" class="primary" onclick="save(event)">Save key</button>
+      <button id="removeBtn" class="danger" onclick="removeKey(event)">Remove</button>
+    </div>
+    <div id="settingsStatus"></div>
+  </div>
 </div>
 <script>
-function load() {
-  google.script.run.withSuccessHandler(v => {
-    document.getElementById('currentKey').textContent = v ? 'Current: ' + v : 'No API key configured.';
-  }).getMaskedGeminiApiKey();
+let busy=false;
+function setBusy(btn,label){
+ if(busy)return false; busy=true;
+ document.querySelectorAll('button,input').forEach(x=>x.disabled=true);
+ btn.dataset.old=btn.innerHTML;btn.classList.add('task-active');
+ btn.innerHTML='<span class="task-spinner"></span>'+label;btn.disabled=false;return true;
 }
-function save() {
-  const key = document.getElementById('apiKey').value;
-  google.script.run.withSuccessHandler(() => {
-    document.getElementById('settingsStatus').textContent = 'Saved.';
-    document.getElementById('apiKey').value = '';
-    load();
-  }).withFailureHandler(e => document.getElementById('settingsStatus').textContent = e.message)
-    .saveGeminiApiKey(key);
+function finish(btn,msg,ok=true){
+ btn.classList.remove('task-active');btn.innerHTML=ok?'✓ Done':'! Error';
+ btn.classList.add(ok?'task-success':'task-error');document.getElementById('settingsStatus').textContent=msg;
+ setTimeout(()=>{btn.innerHTML=btn.dataset.old;btn.classList.remove('task-success','task-error');busy=false;document.querySelectorAll('button,input').forEach(x=>x.disabled=false);load()},650);
 }
-function removeKey() {
-  google.script.run.withSuccessHandler(() => {
-    document.getElementById('settingsStatus').textContent = 'API key removed.';
-    load();
-  }).deleteGeminiApiKey();
+function load(){google.script.run.withSuccessHandler(v=>{document.getElementById('currentKey').textContent=v?'Current: '+v:'No API key configured.'}).getMaskedGeminiApiKey()}
+function save(e){
+ const btn=e.currentTarget,key=document.getElementById('apiKey').value;if(!setBusy(btn,'Saving…'))return;
+ google.script.run.withSuccessHandler(()=>{document.getElementById('apiKey').value='';finish(btn,'API key saved.')}).withFailureHandler(x=>finish(btn,x.message,false)).saveGeminiApiKey(key);
+}
+function removeKey(e){
+ const btn=e.currentTarget;if(!setBusy(btn,'Removing…'))return;
+ google.script.run.withSuccessHandler(()=>finish(btn,'API key removed.')).withFailureHandler(x=>finish(btn,x.message,false)).deleteGeminiApiKey();
 }
 load();
 </script>
-</body>
-</html>
+</body></html>

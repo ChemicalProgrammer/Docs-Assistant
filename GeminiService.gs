@@ -108,3 +108,118 @@ function insertGeminiResult(text, mode) {
   cursor.insertText(text);
   return true;
 }
+
+
+/**
+ * Smart Apply:
+ * Gemini classifies pasted content into semantic blocks, then Apps Script
+ * applies native Google Docs structures/styles at the current selection/cursor.
+ * Gemini never receives permission to edit the document itself.
+ */
+function smartApplyGeminiContent(rawText) {
+  rawText = String(rawText || '').trim();
+  if (!rawText) throw new Error('Paste content first.');
+
+  const prompt = [
+    'Analyze the following content for insertion into a Google Docs document.',
+    'Do NOT rewrite, summarize, translate, correct, or invent content.',
+    'Only classify and structure the supplied content.',
+    'Return ONLY valid JSON. No markdown fences.',
+    'Schema:',
+    '{"blocks":[{"type":"normal|heading1|heading2|heading3|heading4|heading5|heading6|bullet|number|table","text":"...","rows":[["..."]]}]}',
+    'Rules:',
+    '- Preserve the original wording and values.',
+    '- Use heading types only when the content clearly functions as a heading.',
+    '- normal = ordinary paragraphs.',
+    '- bullet/number = list items.',
+    '- table = genuinely tabular content; put cells in rows and omit text.',
+    '- Preserve block order.',
+    '',
+    'CONTENT:',
+    rawText
+  ].join('\n');
+
+  let response = callGemini_(prompt).trim();
+  response = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  let data;
+  try { data = JSON.parse(response); }
+  catch (e) { throw new Error('Gemini could not return a valid document structure. Try again.'); }
+  if (!data.blocks || !Array.isArray(data.blocks)) throw new Error('Invalid Gemini document structure.');
+
+  applyStructuredBlocks_(data.blocks);
+  return { ok:true, blocks:data.blocks.length };
+}
+
+function applyStructuredBlocks_(blocks) {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+  const cursor = doc.getCursor();
+
+  // If text is selected, delete only the textual selection first.
+  // Then use the first selected paragraph as the insertion anchor.
+  let anchor = null;
+  if (selection) {
+    const ranges = selection.getRangeElements();
+    if (ranges.length) {
+      let first = ranges[0].getElement();
+      while (first && first.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+             first.getType() !== DocumentApp.ElementType.LIST_ITEM) first = first.getParent();
+      anchor = first;
+      for (let i=ranges.length-1;i>=0;i--) {
+        const re=ranges[i], el=re.getElement();
+        if (!el.editAsText) continue;
+        const t=el.asText();
+        if (re.isPartial()) t.deleteText(re.getStartOffset(), re.getEndOffsetInclusive());
+        else t.setText('');
+      }
+    }
+  }
+
+  // Insert through a temporary marker at cursor when no selection.
+  if (!anchor) {
+    if (!cursor) throw new Error('Place the cursor where the content should be inserted.');
+    const marker = cursor.insertText('\uE000');
+    anchor = marker.getParent();
+  }
+
+  const parent = anchor.getParent();
+  let index = parent.getChildIndex(anchor);
+
+  // Remove marker if present, while preserving surrounding text.
+  try {
+    const at=anchor.asParagraph().editAsText();
+    const txt=at.getText();
+    const mi=txt.indexOf('\uE000');
+    if(mi>=0) at.deleteText(mi,mi);
+  } catch(e){}
+
+  const headingMap = {
+    heading1:DocumentApp.ParagraphHeading.HEADING1,
+    heading2:DocumentApp.ParagraphHeading.HEADING2,
+    heading3:DocumentApp.ParagraphHeading.HEADING3,
+    heading4:DocumentApp.ParagraphHeading.HEADING4,
+    heading5:DocumentApp.ParagraphHeading.HEADING5,
+    heading6:DocumentApp.ParagraphHeading.HEADING6
+  };
+
+  blocks.forEach(block => {
+    const type=String(block.type||'normal').toLowerCase();
+    if(type==='table' && Array.isArray(block.rows) && block.rows.length){
+      const table=parent.insertTable(++index, block.rows.map(r=>r.map(c=>String(c??''))));
+      return;
+    }
+    const text=String(block.text??'');
+    if(type==='bullet' || type==='number'){
+      const li=parent.insertListItem(++index,text);
+      li.setGlyphType(type==='bullet'?DocumentApp.GlyphType.BULLET:DocumentApp.GlyphType.NUMBER);
+      return;
+    }
+    const p=parent.insertParagraph(++index,text);
+    p.setHeading(headingMap[type] || DocumentApp.ParagraphHeading.NORMAL);
+  });
+
+  // Remove an empty anchor created by replacement when safe.
+  try {
+    if(anchor.getText && anchor.getText()==='' && parent.getNumChildren()>1) anchor.removeFromParent();
+  } catch(e){}
+}

@@ -71,6 +71,8 @@
       <div class="group">
         <label>GEMINI ASSISTANT</label>
         <textarea id="rawText" placeholder="Paste text here, or leave empty to use the selected text…"></textarea>
+        <button class="wide btn-smart" onclick="smartApply(event)">✦ Smart Insert / Replace</button>
+        <div class="smartHint">Automatically detects headings, normal text, lists and tables, then inserts at the cursor or replaces the current selection.</div>
         <textarea id="instruction" class="smallarea" placeholder="Custom instruction…"></textarea>
         <button class="wide btn-gemini" onclick="askGemini(event)">✨ Ask Gemini</button>
       </div>
