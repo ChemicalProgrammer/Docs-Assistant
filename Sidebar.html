@@ -15,8 +15,8 @@
   </header>
 
   <div class="tabs">
-    <button id="tabFormat" class="tab active" onclick="showTab('format')">Formatting</button>
-    <button id="tabGemini" class="tab" onclick="showTab('gemini')">Gemini</button>
+    <button id="tabFormat" class="tab active" onclick="showTab('format')">✎ Formatting</button>
+    <button id="tabGemini" class="tab" onclick="showTab('gemini')">✦ Gemini</button>
   </div>
 
   <main>
@@ -25,21 +25,21 @@
 
       <div class="group">
         <label>TEXT STYLE</label>
-        <button class="wide" onclick="styleText('NORMAL',event)">Normal text</button>
+        <button class="wide btn-style" onclick="styleText('NORMAL',event)">Normal text</button>
         <div class="grid2">
-          <button onclick="styleText('H1',event)">Heading 1</button><button onclick="styleText('H2',event)">Heading 2</button>
-          <button onclick="styleText('H3',event)">Heading 3</button><button onclick="styleText('H4',event)">Heading 4</button>
-          <button onclick="styleText('H5',event)">Heading 5</button><button onclick="styleText('H6',event)">Heading 6</button>
+          <button class="btn-style" onclick="styleText('H1',event)">Heading 1</button><button class="btn-style" onclick="styleText('H2',event)">Heading 2</button>
+          <button class="btn-style" onclick="styleText('H3',event)">Heading 3</button><button class="btn-style" onclick="styleText('H4',event)">Heading 4</button>
+          <button class="btn-style" onclick="styleText('H5',event)">Heading 5</button><button class="btn-style" onclick="styleText('H6',event)">Heading 6</button>
         </div>
       </div>
 
       <div class="group">
         <label>LISTS</label>
         <div class="grid4">
-          <button onclick="list('BULLET',event)">•</button>
-          <button onclick="list('NUMBER',event)">1.</button>
-          <button onclick="list('LETTER',event)">a)</button>
-          <button onclick="list('ROMAN',event)">i.</button>
+          <button class="btn-list" onclick="list('BULLET',event)">•</button>
+          <button class="btn-list" onclick="list('NUMBER',event)">1.</button>
+          <button class="btn-list" onclick="list('LETTER',event)">a)</button>
+          <button class="btn-list" onclick="list('ROMAN',event)">i.</button>
         </div>
         <label class="check"><input id="continueNumbering" type="checkbox"> Continue previous numbering</label>
       </div>
@@ -47,10 +47,10 @@
       <div class="group">
         <label>PARAGRAPH</label>
         <div class="grid2">
-          <button onclick="spacing(6,6,1,event)">Space 6 / 6</button>
-          <button onclick="spacing(0,0,1.5,event)">Line 1.5</button>
-          <button onclick="spacing(0,0,2,event)">Double space</button>
-          <button onclick="keepNext(event)">Keep with next</button>
+          <button class="btn-space" onclick="spacing(6,6,1,event)">Space 6 / 6</button>
+          <button class="btn-space" onclick="spacing(0,0,1.5,event)">Line 1.5</button>
+          <button class="btn-space" onclick="spacing(0,0,2,event)">Double space</button>
+          <button class="btn-space" onclick="keepNext(event)">Keep with next</button>
         </div>
       </div>
 
@@ -61,7 +61,7 @@
           <option value="SECTION_NEXT">Section break — next page</option>
           <option value="SECTION_CONTINUOUS">Section break — continuous</option>
         </select>
-        <button class="wide" onclick="addBreak(event)">Insert break</button>
+        <button class="wide btn-break" onclick="addBreak(event)">Insert break</button>
       </div>
     </section>
 
@@ -72,20 +72,20 @@
         <label>GEMINI ASSISTANT</label>
         <textarea id="rawText" placeholder="Paste text here, or leave empty to use the selected text…"></textarea>
         <textarea id="instruction" class="smallarea" placeholder="Custom instruction…"></textarea>
-        <button class="primary wide" onclick="askGemini(event)">✨ Ask Gemini</button>
+        <button class="wide btn-gemini" onclick="askGemini(event)">✨ Ask Gemini</button>
       </div>
 
       <div class="group">
         <label>QUICK ACTIONS</label>
         <div class="grid2">
-          <button onclick="quick('TRANSLATE_EN',event)">Translate EN</button>
-          <button onclick="quick('TRANSLATE_ES',event)">Translate ES</button>
-          <button onclick="quick('SUMMARIZE_50',event)">Summarize 50%</button>
-          <button onclick="quick('SUMMARIZE_75',event)">Summarize 75%</button>
-          <button onclick="quick('EXPAND_125',event)">Expand 125%</button>
-          <button onclick="quick('EXPAND_150',event)">Expand 150%</button>
-          <button onclick="quick('TECHNICAL',event)">Make technical</button>
-          <button onclick="quick('CONCISE',event)">Make concise</button>
+          <button class="btn-translate" onclick="quick('TRANSLATE_EN',event)">Translate EN</button>
+          <button class="btn-translate" onclick="quick('TRANSLATE_ES',event)">Translate ES</button>
+          <button class="btn-summary" onclick="quick('SUMMARIZE_50',event)">Summarize 50%</button>
+          <button class="btn-summary" onclick="quick('SUMMARIZE_75',event)">Summarize 75%</button>
+          <button class="btn-expand" onclick="quick('EXPAND_125',event)">Expand 125%</button>
+          <button class="btn-expand" onclick="quick('EXPAND_150',event)">Expand 150%</button>
+          <button class="btn-technical" onclick="quick('TECHNICAL',event)">Make technical</button>
+          <button class="btn-technical" onclick="quick('CONCISE',event)">Make concise</button>
         </div>
       </div>
 
@@ -93,7 +93,7 @@
         <label>PREVIEW</label>
         <textarea id="result" class="result"></textarea>
         <div class="grid2">
-          <button id="replaceBtn" class="primary" onclick="applyResult('REPLACE',event)">Replace selection</button>
+          <button id="replaceBtn" class="btn-apply" onclick="applyResult('REPLACE',event)">Replace selection</button>
           <button onclick="applyResult('INSERT',event)">Insert at cursor</button>
         </div>
       </div>

@@ -1,4 +1,4 @@
-# Docs Assistant v0.2.0
+# Docs Assistant v0.3.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -41,3 +41,12 @@ It is not written into the document or source code.
 - Animated busy overlay and active-button shimmer.
 - Success/error micro-interactions.
 - Reduced-motion accessibility support.
+
+
+## v0.3.0 UI
+- Removed global loading overlay.
+- Only active button animates during execution.
+- All other controls are disabled until completion.
+- Colored functional button families.
+- Colored white-text tabs for Formatting and Gemini.
+- Inline spinner, shimmer, Done/Error feedback in active button.
