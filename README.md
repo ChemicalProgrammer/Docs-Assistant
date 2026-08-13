@@ -1,4 +1,4 @@
-# Docs Assistant v0.6.1
+# Docs Assistant v0.6.2
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -136,3 +136,8 @@ It is not written into the document or source code.
   - Before: 0 pt
   - After: 0 pt
 - Applies to header and body cells, including paragraph and list-item content.
+
+
+## v0.6.2
+- Table cells now use single line spacing (1.0) in both header and body cells.
+- Custom spacing remains 0 pt before and 0 pt after.

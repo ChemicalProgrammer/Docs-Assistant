@@ -344,7 +344,7 @@ function formatTableCellContent_(cell, isHeader) {
     if (type === DocumentApp.ElementType.PARAGRAPH) {
       const p = child.asParagraph();
       p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
-      p.setLineSpacing(1.5);
+      p.setLineSpacing(1);
       p.setSpacingBefore(0);
       p.setSpacingAfter(0);
       const t = p.editAsText();
@@ -352,7 +352,7 @@ function formatTableCellContent_(cell, isHeader) {
     } else if (type === DocumentApp.ElementType.LIST_ITEM) {
       const p = child.asListItem();
       p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
-      p.setLineSpacing(1.5);
+      p.setLineSpacing(1);
       p.setSpacingBefore(0);
       p.setSpacingAfter(0);
       const t = p.editAsText();
