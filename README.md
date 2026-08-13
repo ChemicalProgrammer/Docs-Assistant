@@ -1,4 +1,4 @@
-# Docs Assistant v0.6.2
+# Docs Assistant v0.6.3
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -141,3 +141,13 @@ It is not written into the document or source code.
 ## v0.6.2
 - Table cells now use single line spacing (1.0) in both header and body cells.
 - Custom spacing remains 0 pt before and 0 pt after.
+
+
+## v0.6.3
+- All table-cell paragraphs and list items now use:
+  - Left indent: 0.05 in
+  - Right indent: 0 in
+  - Special indent: None
+- Existing table rules remain:
+  - Single line spacing
+  - 0 pt before / 0 pt after

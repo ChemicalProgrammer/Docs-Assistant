@@ -347,6 +347,14 @@ function formatTableCellContent_(cell, isHeader) {
       p.setLineSpacing(1);
       p.setSpacingBefore(0);
       p.setSpacingAfter(0);
+
+      // Table cell paragraph indentation:
+      // Left 0.05 in, Right 0 in, Special indent None.
+      const tableLeftIndentPt = 0.05 * 72;
+      p.setIndentStart(tableLeftIndentPt);
+      p.setIndentEnd(0);
+      p.setIndentFirstLine(tableLeftIndentPt);
+
       const t = p.editAsText();
       t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
     } else if (type === DocumentApp.ElementType.LIST_ITEM) {
@@ -355,6 +363,14 @@ function formatTableCellContent_(cell, isHeader) {
       p.setLineSpacing(1);
       p.setSpacingBefore(0);
       p.setSpacingAfter(0);
+
+      // Table cell paragraph indentation:
+      // Left 0.05 in, Right 0 in, Special indent None.
+      const tableLeftIndentPt = 0.05 * 72;
+      p.setIndentStart(tableLeftIndentPt);
+      p.setIndentEnd(0);
+      p.setIndentFirstLine(tableLeftIndentPt);
+
       const t = p.editAsText();
       t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
     }
