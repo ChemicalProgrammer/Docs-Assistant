@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.3
+# Docs Assistant v0.5.4
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -96,3 +96,10 @@ It is not written into the document or source code.
 - Heading 1–3 are explicitly left aligned.
 - Numeric heading prefixes typed into the text are normalized to exactly one regular space after the number (for example `1.2.3   Title` -> `1.2.3 Title`).
 - Headings 4–6 keep their current named-style indentation until explicit values are defined.
+
+
+## v0.5.4
+- Normal text and Heading 1–6 no longer require selecting the paragraph text.
+- With no selection, the paragraph containing the cursor is treated as the complete target line.
+- With a multi-paragraph selection, styles still apply to every selected paragraph.
+- Heading sentence case, current named-style attributes, and explicit heading indents continue to apply to the whole target paragraph.

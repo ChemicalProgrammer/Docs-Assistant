@@ -1,7 +1,4 @@
 function applyNamedStyle(styleName) {
-  const selection = DocumentApp.getActiveDocument().getSelection();
-  if (!selection) throw new Error('Select one or more paragraphs first.');
-
   const map = {
     NORMAL: DocumentApp.ParagraphHeading.NORMAL,
     H1: DocumentApp.ParagraphHeading.HEADING1,
@@ -22,7 +19,12 @@ function applyNamedStyle(styleName) {
   const body = getActiveBody_();
   const styleAttributes = body.getHeadingAttributes(heading);
 
-  eachSelectedParagraph_(p => {
+  const targets = getStyleTargetParagraphs_();
+  if (!targets.length) {
+    throw new Error('Select text or place the cursor in the paragraph you want to format.');
+  }
+
+  targets.forEach(p => {
     // Heading buttons also normalize the heading text to sentence case.
     // Example: "PROCESS OPERATING CONDITIONS" -> "Process operating conditions"
     if (styleName !== 'NORMAL') {
@@ -105,6 +107,33 @@ function normalizeHeadingNumberSpacing_(paragraph) {
   if (normalized !== text) {
     paragraph.editAsText().setText(normalized);
   }
+}
+
+function getStyleTargetParagraphs_() {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+
+  // If there is a selection, apply the style to every paragraph touched
+  // by the selection, exactly as before.
+  if (selection) {
+    return getSelectedParagraphs_();
+  }
+
+  // If there is no selection, the paragraph/list item containing the cursor
+  // is the target. The user does not need to select the heading text.
+  const cursor = doc.getCursor();
+  if (!cursor) return [];
+
+  let el = cursor.getElement();
+  while (
+    el &&
+    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+    el.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    el = el.getParent();
+  }
+
+  return el ? [el] : [];
 }
 
 function getActiveBody_() {
