@@ -68,8 +68,11 @@
 
       <div class="group">
         <label>CAPTIONS</label>
-        <button class="wide btn-caption" onclick="formatCaption(event)">Figure X. / Table X.</button>
-        <div class="smartHint">Formats the current line as a centered caption and assigns its consecutive Figure or Table number automatically.</div>
+        <div class="grid2">
+          <button class="btn-figure" onclick="formatCaption('figure',event)">Figure</button>
+          <button class="btn-tablecaption" onclick="formatCaption('table',event)">Table</button>
+        </div>
+        <div class="smartHint">Place the cursor anywhere in the line. The button adds Figure/Table if missing, assigns the next consecutive number and applies caption formatting.</div>
       </div>
 
       <div class="group">

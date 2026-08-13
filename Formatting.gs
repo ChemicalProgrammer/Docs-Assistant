@@ -383,53 +383,114 @@ function formatTableCellContent_(cell, isHeader) {
  * Inputs such as "Table 5.1. Overview" are treated as one old caption
  * identifier; ".1" is NOT left behind as part of the description.
  */
-function formatCaptionLine() {
+function formatCaptionLine(captionType) {
+  captionType = String(captionType || '').toLowerCase();
+  const forcedType = captionType === 'figure' ? 'Figure'
+                   : captionType === 'table' ? 'Table'
+                   : null;
+
+  if (!forcedType) throw new Error('Unknown caption type.');
+
   const targets = getStyleTargetParagraphs_();
   if (!targets.length) {
-    throw new Error('Place the cursor in a Figure/Table caption or select the caption line.');
+    throw new Error('Place the cursor in the caption line or select it.');
   }
   if (targets.length !== 1) {
-    throw new Error('Format one Figure/Table caption at a time.');
+    throw new Error('Format one caption at a time.');
   }
 
   const p = targets[0];
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
-    throw new Error('Figure/Table captions cannot be list items.');
+    throw new Error('Captions cannot be list items.');
   }
 
-  const parsed = parseCaptionLine_(p.getText());
-  if (!parsed) {
-    throw new Error('The line must begin with "Figure X." or "Table X."');
-  }
+  const original = p.getText();
 
-  const nextNumber = getCaptionOrdinal_(p, parsed.type);
-  formatCaptionParagraph_(p, parsed.type, parsed.description, nextNumber);
+  // If the line already starts with Figure/Table, strip that existing prefix.
+  // Otherwise treat the current line as the description, but also remove a
+  // leading old numeric caption identifier such as "5.1. Overview".
+  const parsed = parseCaptionLine_(original);
+  const content = parsed
+    ? {description: parsed.description}
+    : parseCaptionDescriptionOnly_(original);
+
+  const nextNumber = getCaptionOrdinal_(p, forcedType);
+  formatCaptionParagraph_(p, forcedType, content.description, nextNumber);
 
   return {
     ok: true,
-    type: parsed.type,
+    type: forcedType,
     number: nextNumber,
     text: p.getText()
   };
 }
 
-function parseCaptionLine_(value) {
-  const text = String(value || '');
+function parseCaptionDescriptionOnly_(value) {
+  let remainder = String(value || '').trim();
 
-  // Important: consume the COMPLETE old identifier:
-  // Table 5.1. Overview  -> id "5.1", description "Overview"
-  // Table 5.1.2. Title   -> id "5.1.2", description "Title"
-  // Table 7. Title       -> id "7", description "Title"
-  // Table X. Title       -> id "X", description "Title"
-  const match = text.match(
-    /^\s*(Figure|Table)\s+(X|\d+(?:\.\d+)*)\.\s*(.*)$/i
+  // When the caption keyword is missing, allow old identifiers such as:
+  // "5.1. Overview" -> "Overview"
+  // "3. Process diagram" -> "Process diagram"
+  // "X. Overview" -> "Overview"
+  const numberMatch = remainder.match(
+    /^((?:X)|(?:\d+(?:\s*\.\s*\d+)*))(?=\s|[.:–—-]|$)/i
   );
-  if (!match) return null;
 
+  if (numberMatch) {
+    remainder = remainder.substring(numberMatch[0].length);
+    remainder = remainder.replace(/^\s*[.:–—-]?\s*/, '');
+  }
+
+  return {description: remainder.trim()};
+}
+
+function parseCaptionLine_(value) {
+  const source = String(value || '');
+
+  // Caption keyword is case-insensitive:
+  // FIGURE..., Figure..., figure..., TABLE..., etc.
+  const head = source.match(/^\s*(Figure|Table)\b\s*(.*)$/i);
+  if (!head) return null;
+
+  const type = head[1].toLowerCase() === 'figure' ? 'Figure' : 'Table';
+  let remainder = String(head[2] || '').trim();
+
+  // Allow punctuation immediately after the keyword:
+  // "FIGURE: Process flow"
+  remainder = remainder.replace(/^[\s:–—-]+/, '');
+
+  let oldNumber = '';
+
+  // Consume the COMPLETE old numbering prefix in one operation.
+  // Spaces around decimal dots are accepted intentionally, so even a
+  // previously malformed value such as "Table 54. 1. Overview" is read
+  // as one old identifier and becomes "Table N. Overview".
+  //
+  // Examples consumed:
+  // X
+  // 5
+  // 5.1
+  // 5.1.3
+  // 54. 1
+  const numberMatch = remainder.match(
+    /^((?:X)|(?:\d+(?:\s*\.\s*\d+)*))(?=\s|[.:–—-]|$)/i
+  );
+
+  if (numberMatch) {
+    oldNumber = numberMatch[1].replace(/\s+/g, '');
+    remainder = remainder.substring(numberMatch[0].length);
+
+    // Remove the punctuation that terminated the old identifier.
+    // Handles both "5.1. Overview" and "5.1 Overview".
+    remainder = remainder.replace(/^\s*[.:–—-]?\s*/, '');
+  }
+
+  // If no old number exists, the line is still accepted:
+  // "FIGURE Process flow" -> "Figure N. Process flow"
   return {
-    type: match[1].toLowerCase() === 'figure' ? 'Figure' : 'Table',
-    oldNumber: match[2],
-    description: match[3] || ''
+    type: type,
+    oldNumber: oldNumber,
+    description: remainder.trim()
   };
 }
 

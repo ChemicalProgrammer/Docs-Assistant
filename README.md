@@ -1,4 +1,4 @@
-# Docs Assistant v0.6.3
+# Docs Assistant v0.6.5
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -151,3 +151,23 @@ It is not written into the document or source code.
 - Existing table rules remain:
   - Single line spacing
   - 0 pt before / 0 pt after
+
+
+## v0.6.4
+- Figure/Table caption detection is now fully case-insensitive (`FIGURE`, `Figure`, `figure`, `TABLE`, etc.).
+- A caption can begin with only the keyword; an existing X/number is optional.
+- Decimal/chapter-style identifiers are consumed as one complete old number:
+  - `Table 5.1. Overview` -> `Table N. Overview`
+  - `Table 5.1 Overview` -> `Table N. Overview`
+  - `Figure 5.1.3. Diagram` -> `Figure N. Diagram`
+- The parser also recovers from malformed prior output such as `Table 54. 1. Overview` by consuming `54. 1` as the old identifier.
+
+
+## v0.6.5
+- Split the caption action into separate `Figure` and `Table` buttons.
+- A caption keyword is no longer required in the source line.
+  - `Overview of the process` + Figure -> `Figure N. Overview of the process`
+  - `5.1. Overview` + Table -> `Table N. Overview`
+- Existing Figure/Table prefixes and old dotted numbers are removed before applying the new consecutive number.
+- Button text is smaller throughout the sidebar.
+- Compact buttons now use a minimal `…` loading label instead of long labels such as `Applying…`.

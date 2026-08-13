@@ -61,12 +61,12 @@ function fullSmartFormat(e){
    .withFailureHandler(fail)
    .smartFormatSelection();
 }
-function styleText(s,e){runServer(e.currentTarget,'Applying…','applyNamedStyle',[s],'Style applied')}
-function spacing(b,a,l,e){runServer(e.currentTarget,'Formatting…','setParagraphSpacing',[b,a,l],'Spacing applied')}
-function keepNext(e){runServer(e.currentTarget,'Applying…','setKeepWithNext',[true],'Keep with next applied')}
-function list(t,e){runServer(e.currentTarget,'Applying…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
-function formatCaption(e){
- runServer(e.currentTarget,'Numbering…','formatCaptionLine',[],'Caption formatted');
+function styleText(s,e){runServer(e.currentTarget,'…','applyNamedStyle',[s],'Style applied')}
+function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
+function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
+function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
+function formatCaption(type,e){
+ runServer(e.currentTarget,'…','formatCaptionLine',[type],type === 'figure' ? 'Figure caption formatted' : 'Table caption formatted');
 }
 function formatTable(e){
  runServer(e.currentTarget,'Formatting…','formatSelectedTable',[],'Table formatted');
