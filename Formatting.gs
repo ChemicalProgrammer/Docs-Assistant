@@ -345,12 +345,16 @@ function formatTableCellContent_(cell, isHeader) {
       const p = child.asParagraph();
       p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
       p.setLineSpacing(1.5);
+      p.setSpacingBefore(0);
+      p.setSpacingAfter(0);
       const t = p.editAsText();
       t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
     } else if (type === DocumentApp.ElementType.LIST_ITEM) {
       const p = child.asListItem();
       p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
       p.setLineSpacing(1.5);
+      p.setSpacingBefore(0);
+      p.setSpacingAfter(0);
       const t = p.editAsText();
       t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
     }

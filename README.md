@@ -1,4 +1,4 @@
-# Docs Assistant v0.6.0
+# Docs Assistant v0.6.1
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -129,3 +129,10 @@ It is not written into the document or source code.
   - Detects Normal text, Heading 1–6, bullets, numeric lists, letter incisos, Roman lists and Figure/Table captions.
   - Actual table-cell content is deliberately skipped in the full-format pass; use `Format selected table` for table objects.
   - Figure/Table caption lines remain supported and are numbered using a single document scan for better performance.
+
+
+## v0.6.1
+- Table formatting now applies Custom Spacing to all text inside all cells:
+  - Before: 0 pt
+  - After: 0 pt
+- Applies to header and body cells, including paragraph and list-item content.
