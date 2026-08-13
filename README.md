@@ -1,4 +1,4 @@
-# Docs Assistant v0.4.1
+# Docs Assistant v0.5.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -60,3 +60,12 @@ It is not written into the document or source code.
 
 ## v0.4.1
 - Fixed multi-paragraph selection detection. Normal text and Heading 1–6 now apply to every paragraph touched by the selection.
+
+
+## v0.5.0
+- Added Format selected table.
+- Black 1 pt borders, no background, 0.49 in minimum row height, 0.028 in padding, middle vertical alignment.
+- First row: Arial 9, bold, 1.5 line spacing, centered.
+- Body: Arial 9, regular, 1.5 line spacing, left aligned, vertically centered.
+- Column widths are left automatic by not forcing a width.
+- Properties not exposed reliably by DocumentApp are not simulated.

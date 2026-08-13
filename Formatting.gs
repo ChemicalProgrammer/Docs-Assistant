@@ -110,3 +110,75 @@ function eachSelectedParagraph_(fn) {
   if (!paragraphs.length) throw new Error('Select one or more paragraphs first.');
   paragraphs.forEach(fn);
 }
+
+
+function formatSelectedTable() {
+  const table = getActiveTable_();
+  if (!table) throw new Error('Place the cursor inside a table or select content inside a table.');
+
+  table.setBorderColor('#000000');
+  table.setBorderWidth(1);
+
+  for (let r = 0; r < table.getNumRows(); r++) {
+    const row = table.getRow(r);
+    row.setMinimumHeight(0.49 * 72);
+
+    for (let c = 0; c < row.getNumCells(); c++) {
+      const cell = row.getCell(c);
+      cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+      cell.setPaddingTop(0.028 * 72);
+      cell.setPaddingBottom(0.028 * 72);
+      cell.setPaddingLeft(0.028 * 72);
+      cell.setPaddingRight(0.028 * 72);
+      cell.setBackgroundColor(null);
+      formatTableCellContent_(cell, r === 0);
+    }
+  }
+  return {ok:true, rows:table.getNumRows()};
+}
+
+function getActiveTable_() {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+  if (selection) {
+    const ranges = selection.getRangeElements();
+    for (let i = 0; i < ranges.length; i++) {
+      const table = findAncestorTable_(ranges[i].getElement());
+      if (table) return table;
+    }
+  }
+  const cursor = doc.getCursor();
+  if (cursor) {
+    const table = findAncestorTable_(cursor.getElement());
+    if (table) return table;
+  }
+  return null;
+}
+
+function findAncestorTable_(el) {
+  while (el) {
+    if (el.getType && el.getType() === DocumentApp.ElementType.TABLE) return el.asTable();
+    el = el.getParent ? el.getParent() : null;
+  }
+  return null;
+}
+
+function formatTableCellContent_(cell, isHeader) {
+  for (let i = 0; i < cell.getNumChildren(); i++) {
+    const child = cell.getChild(i);
+    const type = child.getType();
+    if (type === DocumentApp.ElementType.PARAGRAPH) {
+      const p = child.asParagraph();
+      p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
+      p.setLineSpacing(1.5);
+      const t = p.editAsText();
+      t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
+    } else if (type === DocumentApp.ElementType.LIST_ITEM) {
+      const p = child.asListItem();
+      p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
+      p.setLineSpacing(1.5);
+      const t = p.editAsText();
+      t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
+    }
+  }
+}
