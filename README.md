@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.2
+# Docs Assistant v0.5.3
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -86,3 +86,13 @@ It is not written into the document or source code.
 - Rich-text attributes from the current named style are also reapplied to prevent prior direct character formatting from overriding the style visually.
 - Heading 1–6 text is converted to sentence case automatically: first alphabetic character uppercase, remaining text lowercase.
 - Normal text does not change capitalization.
+
+
+## v0.5.3
+- Heading indentation is now applied explicitly after the current named style:
+  - Heading 1: Left -0.12 in, Right 0 in, Special indent None.
+  - Heading 2: Left 0 in, Right 0 in, Special indent None.
+  - Heading 3: Left 0.19 in, Right 0 in, Special indent None.
+- Heading 1–3 are explicitly left aligned.
+- Numeric heading prefixes typed into the text are normalized to exactly one regular space after the number (for example `1.2.3   Title` -> `1.2.3 Title`).
+- Headings 4–6 keep their current named-style indentation until explicit values are defined.

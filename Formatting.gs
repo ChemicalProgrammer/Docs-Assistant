@@ -46,12 +46,65 @@ function applyNamedStyle(styleName) {
     // by the attribute map.
     p.setHeading(heading);
 
+    // Apply the explicit heading indentation required by the document standard.
+    // These values intentionally override the indentation stored in the named style.
+    applyHeadingIndentation_(p, styleName);
+
+    // Normalize manually typed heading numbering so the title begins exactly
+    // one normal space after the section number (no tabs / repeated spaces).
+    if (styleName !== 'NORMAL') {
+      normalizeHeadingNumberSpacing_(p);
+    }
+
     // Apply rich-text attributes explicitly as well so previous direct
     // character formatting does not visually override the current style.
     applyNamedTextAttributes_(p, styleAttributes);
   });
 
   return true;
+}
+
+function applyHeadingIndentation_(paragraph, styleName) {
+  const PT_PER_IN = 72;
+
+  const indents = {
+    H1: {left: -0.12, right: 0},
+    H2: {left:  0.00, right: 0},
+    H3: {left:  0.19, right: 0}
+  };
+
+  const cfg = indents[styleName];
+  if (!cfg) return;
+
+  const leftPt = cfg.left * PT_PER_IN;
+  const rightPt = cfg.right * PT_PER_IN;
+
+  // "Special indent: None" means the first line begins at the same
+  // position as the paragraph's left/start indent.
+  paragraph.setIndentStart(leftPt);
+  paragraph.setIndentEnd(rightPt);
+  paragraph.setIndentFirstLine(leftPt);
+  paragraph.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
+}
+
+function normalizeHeadingNumberSpacing_(paragraph) {
+  const text = paragraph.getText();
+  if (!text) return;
+
+  // Examples:
+  // "1.    Introduction"    -> "1. Introduction"
+  // "1.2\tScope"            -> "1.2 Scope"
+  // "1.2.3   Methodology"   -> "1.2.3 Methodology"
+  //
+  // Only affects headings that begin with a numeric section identifier.
+  const normalized = text.replace(
+    /^(\s*\d+(?:\.\d+)*\.?)[\t ]+/,
+    '$1 '
+  );
+
+  if (normalized !== text) {
+    paragraph.editAsText().setText(normalized);
+  }
 }
 
 function getActiveBody_() {
