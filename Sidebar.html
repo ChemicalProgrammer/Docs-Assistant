@@ -23,6 +23,12 @@
     <section id="formatPanel">
       <div class="context" id="selectionContext">Checking selection…</div>
 
+      <div class="group smartFormatGroup">
+        <label>SMART FORMAT</label>
+        <button class="wide btn-fullformat" onclick="fullSmartFormat(event)">✦ Format complete selection</button>
+        <div class="smartHint">Gemini classifies the selected paragraphs once, then the Add-on applies Normal text, headings, bullets, numbering, incisos and captions locally. Actual table objects are skipped.</div>
+      </div>
+
       <div class="group">
         <label>TEXT STYLE</label>
         <button class="wide btn-style" onclick="styleText('NORMAL',event)">Normal text</button>

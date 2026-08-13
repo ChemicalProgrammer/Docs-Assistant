@@ -51,6 +51,16 @@ function refreshContext(){
   if(!taskRunning)document.getElementById('replaceBtn').disabled=!c.hasSelection;
  }).getDocumentContext();
 }
+function fullSmartFormat(e){
+ if(!beginTask(e.currentTarget,'Analyzing…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     const skipped=r && r.skippedTableParagraphs ? ` · ${r.skippedTableParagraphs} table-cell paragraphs skipped` : '';
+     endTask(true,`Complete format applied${skipped}`);
+   })
+   .withFailureHandler(fail)
+   .smartFormatSelection();
+}
 function styleText(s,e){runServer(e.currentTarget,'Applying…','applyNamedStyle',[s],'Style applied')}
 function spacing(b,a,l,e){runServer(e.currentTarget,'Formatting…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'Applying…','setKeepWithNext',[true],'Keep with next applied')}

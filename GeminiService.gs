@@ -223,3 +223,59 @@ function applyStructuredBlocks_(blocks) {
     if(anchor.getText && anchor.getText()==='' && parent.getNumChildren()>1) anchor.removeFromParent();
   } catch(e){}
 }
+
+
+function classifyFormattingPlanWithGemini_(items) {
+  const prompt = [
+    'Classify paragraphs from a technical Google Docs document.',
+    'Do NOT rewrite any text. Return only JSON.',
+    'Allowed types:',
+    'normal, heading1, heading2, heading3, heading4, heading5, heading6, bullet, number, letter, roman, figure_caption, table_caption.',
+    '',
+    'Rules:',
+    '- Preserve every id exactly.',
+    '- If fixedType is not empty, return that exact type.',
+    '- heading1 = main numbered section/title, often 1. Title.',
+    '- heading2 = subsection, often 1.1 Title.',
+    '- heading3 = deeper subsection, often 1.1.1 Title.',
+    '- heading4/5/6 = progressively deeper headings when clearly applicable.',
+    '- bullet = unordered bullet item.',
+    '- number = ordered numeric list item that is NOT a section heading.',
+    '- letter = inciso/list item such as a), b), c), or equivalent.',
+    '- roman = roman numeral list item such as i., ii., iii. or i), ii).',
+    '- normal = ordinary prose.',
+    '- Use surrounding paragraphs to distinguish numbered headings from numbered lists.',
+    '',
+    'Return exactly this shape:',
+    '{"items":[{"id":"p0","type":"normal"}]}',
+    '',
+    'INPUT:',
+    JSON.stringify(items)
+  ].join('\n');
+
+  let response = callGemini_(prompt).trim();
+  response = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+
+  let data;
+  try {
+    data = JSON.parse(response);
+  } catch (e) {
+    throw new Error('Gemini could not classify the selected document structure.');
+  }
+
+  if (!data.items || !Array.isArray(data.items)) {
+    throw new Error('Gemini returned an invalid formatting plan.');
+  }
+
+  const allowed = {
+    normal:true,
+    heading1:true, heading2:true, heading3:true,
+    heading4:true, heading5:true, heading6:true,
+    bullet:true, number:true, letter:true, roman:true,
+    figure_caption:true, table_caption:true
+  };
+
+  return data.items
+    .filter(x => x && typeof x.id === 'string' && allowed[String(x.type || '').toLowerCase()])
+    .map(x => ({id:x.id, type:String(x.type).toLowerCase()}));
+}

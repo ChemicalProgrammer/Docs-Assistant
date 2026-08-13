@@ -1,4 +1,14 @@
 function applyNamedStyle(styleName) {
+  const targets = getStyleTargetParagraphs_();
+  if (!targets.length) {
+    throw new Error('Select text or place the cursor in the paragraph you want to format.');
+  }
+
+  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
+  return true;
+}
+
+function applyNamedStyleToParagraph_(p, styleName) {
   const map = {
     NORMAL: DocumentApp.ParagraphHeading.NORMAL,
     H1: DocumentApp.ParagraphHeading.HEADING1,
@@ -12,58 +22,28 @@ function applyNamedStyle(styleName) {
   const heading = map[styleName];
   if (!heading) throw new Error('Unknown style.');
 
-  // Read the CURRENT named-style attributes from this document.
-  // This includes paragraph-level properties such as indents, alignment,
-  // line spacing, spacing before/after, plus the text-style attributes
-  // exposed by Google Docs.
   const body = getActiveBody_();
   const styleAttributes = body.getHeadingAttributes(heading);
 
-  const targets = getStyleTargetParagraphs_();
-  if (!targets.length) {
-    throw new Error('Select text or place the cursor in the paragraph you want to format.');
+  if (styleName !== 'NORMAL') {
+    const currentText = p.getText();
+    const converted = sentenceCaseHeading_(currentText);
+    if (converted !== currentText) {
+      p.editAsText().setText(converted);
+    }
   }
 
-  targets.forEach(p => {
-    // Heading buttons also normalize the heading text to sentence case.
-    // Example: "PROCESS OPERATING CONDITIONS" -> "Process operating conditions"
-    if (styleName !== 'NORMAL') {
-      const currentText = p.getText();
-      const converted = sentenceCaseHeading_(currentText);
-      if (converted !== currentText) {
-        p.editAsText().setText(converted);
-      }
-    }
+  p.setHeading(heading);
+  p.setAttributes(styleAttributes);
+  p.setHeading(heading);
 
-    // First assign the semantic named style.
-    p.setHeading(heading);
+  applyHeadingIndentation_(p, styleName);
 
-    // Then explicitly copy the CURRENT named-style attributes into the
-    // paragraph. This is intentional: Google Docs may preserve direct
-    // paragraph formatting (especially indents) when only setHeading() is
-    // called. Applying the named-style attributes removes that discrepancy.
-    p.setAttributes(styleAttributes);
+  if (styleName !== 'NORMAL') {
+    normalizeHeadingNumberSpacing_(p);
+  }
 
-    // Reassert the semantic style in case HEADING was included/affected
-    // by the attribute map.
-    p.setHeading(heading);
-
-    // Apply the explicit heading indentation required by the document standard.
-    // These values intentionally override the indentation stored in the named style.
-    applyHeadingIndentation_(p, styleName);
-
-    // Normalize manually typed heading numbering so the title begins exactly
-    // one normal space after the section number (no tabs / repeated spaces).
-    if (styleName !== 'NORMAL') {
-      normalizeHeadingNumberSpacing_(p);
-    }
-
-    // Apply rich-text attributes explicitly as well so previous direct
-    // character formatting does not visually override the current style.
-    applyNamedTextAttributes_(p, styleAttributes);
-  });
-
-  return true;
+  applyNamedTextAttributes_(p, styleAttributes);
 }
 
 function applyHeadingIndentation_(paragraph, styleName) {
@@ -205,6 +185,18 @@ function applyListPreset(type, continuePrevious) {
   const selection = DocumentApp.getActiveDocument().getSelection();
   if (!selection) throw new Error('Select paragraphs first.');
 
+  const paragraphs = getSelectedParagraphs_();
+  paragraphs.forEach(p => applyListFormatToParagraph_(p, type));
+
+  return {
+    ok: true,
+    continuePrevious: Boolean(continuePrevious),
+    leftIndentInches: 0.06,
+    hangingIndentInches: 0.25
+  };
+}
+
+function applyListFormatToParagraph_(p, type) {
   const glyphs = {
     BULLET: DocumentApp.GlyphType.BULLET,
     NUMBER: DocumentApp.GlyphType.NUMBER,
@@ -218,45 +210,30 @@ function applyListPreset(type, continuePrevious) {
   const LEFT_IN = 0.06;
   const HANGING_IN = 0.25;
   const PT_PER_IN = 72;
-
-  // Google Docs hanging indent semantics:
-  // first line starts at LEFT_IN;
-  // wrapped/subsequent lines start LEFT_IN + HANGING_IN.
   const firstLinePt = LEFT_IN * PT_PER_IN;
   const startPt = (LEFT_IN + HANGING_IN) * PT_PER_IN;
 
-  const paragraphs = getSelectedParagraphs_();
+  // Always start from the CURRENT Normal text style.
+  applyNamedStyleToParagraph_(p, 'NORMAL');
 
-  paragraphs.forEach(p => {
-    // Step 1: force the selected paragraph/list item to use the
-    // document's current Normal text named style before list formatting.
-    p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+  let item = p;
 
-    let item = p;
+  // Reuse an existing list item; otherwise convert the paragraph.
+  if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) {
+    const parent = p.getParent();
+    const idx = parent.getChildIndex(p);
+    item = parent.insertListItem(idx, p.getText());
+    p.removeFromParent();
 
-    // Step 2: if it is not already a ListItem, convert it.
-    // If it is already a ListItem, reuse it instead of recreating it.
-    if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) {
-      const parent = p.getParent();
-      const idx = parent.getChildIndex(p);
-      item = parent.insertListItem(idx, p.getText());
-      item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-      p.removeFromParent();
-    }
+    // Converting to ListItem creates a new element, so reapply Normal text.
+    applyNamedStyleToParagraph_(item, 'NORMAL');
+  }
 
-    // Step 3: apply the requested list glyph and indentation.
-    item.setGlyphType(glyph);
-    item.setIndentStart(startPt);
-    item.setIndentFirstLine(firstLinePt);
-  });
+  item.setGlyphType(glyph);
+  item.setIndentStart(startPt);
+  item.setIndentFirstLine(firstLinePt);
 
-  // Exact numbering continuation/restart still depends on the Docs API.
-  return {
-    ok: true,
-    continuePrevious: Boolean(continuePrevious),
-    leftIndentInches: LEFT_IN,
-    hangingIndentInches: HANGING_IN
-  };
+  return item;
 }
 
 function insertBreak(kind) {
@@ -382,16 +359,9 @@ function formatTableCellContent_(cell, isHeader) {
 
 
 /**
- * Formats the current paragraph as a Figure/Table caption and assigns
- * the correct consecutive number based on previous captions of the same type.
- *
- * Supported input examples:
- *   Figure X. Description
- *   Figure 7. Description
- *   Table X. Description
- *   Table 3. Description
- *
- * Figure and Table numbering are independent sequences.
+ * Formats the current paragraph as a Figure/Table caption.
+ * Inputs such as "Table 5.1. Overview" are treated as one old caption
+ * identifier; ".1" is NOT left behind as part of the description.
  */
 function formatCaptionLine() {
   const targets = getStyleTargetParagraphs_();
@@ -407,58 +377,62 @@ function formatCaptionLine() {
     throw new Error('Figure/Table captions cannot be list items.');
   }
 
-  const original = p.getText();
-  const match = original.match(/^\s*(Figure|Table)\s+(?:X|\d+)\.\s*(.*)$/i);
-  if (!match) {
+  const parsed = parseCaptionLine_(p.getText());
+  if (!parsed) {
     throw new Error('The line must begin with "Figure X." or "Table X."');
   }
 
-  const type = match[1].toLowerCase() === 'figure' ? 'Figure' : 'Table';
-  const description = match[2] || '';
-  const nextNumber = getCaptionOrdinal_(p, type);
+  const nextNumber = getCaptionOrdinal_(p, parsed.type);
+  formatCaptionParagraph_(p, parsed.type, parsed.description, nextNumber);
 
-  const captionText = type + ' ' + nextNumber + '. ' + description.trim();
+  return {
+    ok: true,
+    type: parsed.type,
+    number: nextNumber,
+    text: p.getText()
+  };
+}
 
-  // Start from the document's current Normal text style.
-  const body = getActiveBody_();
-  const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
+function parseCaptionLine_(value) {
+  const text = String(value || '');
 
-  p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-  p.setAttributes(normalAttrs);
-  p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+  // Important: consume the COMPLETE old identifier:
+  // Table 5.1. Overview  -> id "5.1", description "Overview"
+  // Table 5.1.2. Title   -> id "5.1.2", description "Title"
+  // Table 7. Title       -> id "7", description "Title"
+  // Table X. Title       -> id "X", description "Title"
+  const match = text.match(
+    /^\s*(Figure|Table)\s+(X|\d+(?:\.\d+)*)\.\s*(.*)$/i
+  );
+  if (!match) return null;
 
-  // Replace the full line with the correctly numbered caption.
+  return {
+    type: match[1].toLowerCase() === 'figure' ? 'Figure' : 'Table',
+    oldNumber: match[2],
+    description: match[3] || ''
+  };
+}
+
+function formatCaptionParagraph_(p, type, description, number) {
+  const captionText = type + ' ' + number + '. ' + String(description || '').trim();
+
+  // Start from CURRENT Normal text style, then apply caption overrides.
+  applyNamedStyleToParagraph_(p, 'NORMAL');
+
   const t = p.editAsText();
   t.setText(captionText);
-
-  // Caption overrides.
   t.setFontFamily('Arial');
   t.setFontSize(9);
   t.setBold(false);
 
-  // Bold only "Figure X." / "Table X."
-  const prefix = type + ' ' + nextNumber + '.';
-  if (prefix.length > 0) {
+  const prefix = type + ' ' + number + '.';
+  if (prefix.length) {
     t.setBold(0, prefix.length - 1, true);
   }
 
   p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-
-  return {
-    ok: true,
-    type: type,
-    number: nextNumber,
-    text: captionText
-  };
 }
 
-/**
- * Returns the 1-based ordinal of the caption paragraph among captions
- * of the same type that appear before it in the current document body.
- *
- * This is more robust than looking only at the immediately previous caption:
- * deleting/moving captions does not break numbering.
- */
 function getCaptionOrdinal_(targetParagraph, type) {
   const body = getActiveBody_();
   let count = 0;
@@ -471,17 +445,177 @@ function getCaptionOrdinal_(targetParagraph, type) {
     }
 
     if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
-      const txt = child.asParagraph().getText();
-      const re = type === 'Figure'
-        ? /^\s*Figure\s+(?:X|\d+)\./i
-        : /^\s*Table\s+(?:X|\d+)\./i;
-
-      if (re.test(txt)) count++;
+      const parsed = parseCaptionLine_(child.asParagraph().getText());
+      if (parsed && parsed.type === type) count++;
     }
   }
 
-  // If the paragraph is nested or otherwise not a direct body child,
-  // fall back to counting captions before it through body text order.
-  // The normal caption workflow should be direct body paragraphs.
   return count + 1;
+}
+
+/**
+ * Full Smart Format
+ * -----------------
+ * One Gemini classification request for the entire selected text, followed
+ * by deterministic local formatting. Actual table objects and image objects
+ * are intentionally not reformatted here for speed/safety.
+ */
+function smartFormatSelection() {
+  const selection = DocumentApp.getActiveDocument().getSelection();
+  if (!selection) {
+    throw new Error('Select the text you want to format completely.');
+  }
+
+  const allTargets = getSelectedParagraphs_();
+  if (!allTargets.length) throw new Error('No paragraphs were found in the selection.');
+
+  // Skip paragraphs inside actual table cells. Tables keep their dedicated button.
+  const targets = allTargets.filter(p => !isInsideTable_(p));
+  const skippedTableParagraphs = allTargets.length - targets.length;
+
+  const items = [];
+  const targetById = {};
+
+  targets.forEach((p, index) => {
+    const value = p.getText();
+    if (!value.trim()) return;
+
+    const id = 'p' + index;
+    const parsedCaption = parseCaptionLine_(value);
+    let currentList = '';
+
+    if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
+      try {
+        currentList = String(p.asListItem().getGlyphType());
+      } catch (e) {}
+    }
+
+    items.push({
+      id: id,
+      text: value,
+      fixedType: parsedCaption
+        ? (parsedCaption.type === 'Figure' ? 'figure_caption' : 'table_caption')
+        : '',
+      existingList: currentList
+    });
+    targetById[id] = p;
+  });
+
+  if (!items.length) throw new Error('The selection contains no text paragraphs to format.');
+
+  const plan = classifyFormattingPlanWithGemini_(items);
+  const planById = {};
+  plan.forEach(x => planById[x.id] = x.type);
+
+  // Compute caption numbers BEFORE changing any selected caption text.
+  // This avoids rescanning the document once per caption.
+  const captionNumbers = buildCaptionNumberPlan_(items, targetById);
+
+  let formatted = 0;
+  let captions = 0;
+  let lists = 0;
+  let headings = 0;
+
+  items.forEach(item => {
+    let p = targetById[item.id];
+    if (!p) return;
+
+    let type = item.fixedType || planById[item.id] || 'normal';
+
+    switch (type) {
+      case 'heading1':
+        applyNamedStyleToParagraph_(p, 'H1'); headings++; break;
+      case 'heading2':
+        applyNamedStyleToParagraph_(p, 'H2'); headings++; break;
+      case 'heading3':
+        applyNamedStyleToParagraph_(p, 'H3'); headings++; break;
+      case 'heading4':
+        applyNamedStyleToParagraph_(p, 'H4'); headings++; break;
+      case 'heading5':
+        applyNamedStyleToParagraph_(p, 'H5'); headings++; break;
+      case 'heading6':
+        applyNamedStyleToParagraph_(p, 'H6'); headings++; break;
+
+      case 'bullet':
+        applyListFormatToParagraph_(p, 'BULLET'); lists++; break;
+      case 'number':
+        applyListFormatToParagraph_(p, 'NUMBER'); lists++; break;
+      case 'letter':
+        applyListFormatToParagraph_(p, 'LETTER'); lists++; break;
+      case 'roman':
+        applyListFormatToParagraph_(p, 'ROMAN'); lists++; break;
+
+      case 'figure_caption':
+      case 'table_caption': {
+        const parsed = parseCaptionLine_(p.getText());
+        if (parsed) {
+          const n = captionNumbers[item.id] || getCaptionOrdinal_(p, parsed.type);
+          formatCaptionParagraph_(p, parsed.type, parsed.description, n);
+          captions++;
+        }
+        break;
+      }
+
+      case 'normal':
+      default:
+        applyNamedStyleToParagraph_(p, 'NORMAL');
+        break;
+    }
+
+    formatted++;
+  });
+
+  return {
+    ok: true,
+    formatted: formatted,
+    headings: headings,
+    lists: lists,
+    captions: captions,
+    skippedTableParagraphs: skippedTableParagraphs
+  };
+}
+
+function isInsideTable_(el) {
+  let current = el;
+  while (current) {
+    if (current.getType && current.getType() === DocumentApp.ElementType.TABLE_CELL) {
+      return true;
+    }
+    current = current.getParent ? current.getParent() : null;
+  }
+  return false;
+}
+
+function buildCaptionNumberPlan_(items, targetById) {
+  const result = {};
+  const wanted = new Map();
+
+  items.forEach(item => {
+    if (item.fixedType === 'figure_caption' || item.fixedType === 'table_caption') {
+      const p = targetById[item.id];
+      if (p) wanted.set(p, item.id);
+    }
+  });
+
+  if (!wanted.size) return result;
+
+  const body = getActiveBody_();
+  let figureCount = 0;
+  let tableCount = 0;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const child = body.getChild(i);
+    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+
+    const parsed = parseCaptionLine_(child.asParagraph().getText());
+    if (!parsed) continue;
+
+    const next = parsed.type === 'Figure' ? ++figureCount : ++tableCount;
+
+    if (wanted.has(child)) {
+      result[wanted.get(child)] = next;
+    }
+  }
+
+  return result;
 }

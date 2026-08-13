@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.5
+# Docs Assistant v0.6.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -115,3 +115,17 @@ It is not written into the document or source code.
   - Only `Figure N.` / `Table N.` is bold.
 - Figure and Table numbering are independent integer sequences.
 - The correct number is calculated by scanning all prior captions of the same type in document order, rather than relying on the immediately previous caption.
+
+
+## v0.6.0
+- Fixed caption parsing: `Table 5.1. Overview` now becomes `Table N. Overview`; the complete old dotted identifier is removed.
+- Bullet, numeric, letter/inciso and Roman list buttons now share one formatting engine:
+  - current Normal text style first
+  - Left indent 0.06 in
+  - Hanging indent 0.25 in
+- Added `Format complete selection`.
+  - Gemini is called once to classify the selected paragraphs.
+  - Formatting is then applied locally with the existing deterministic functions.
+  - Detects Normal text, Heading 1–6, bullets, numeric lists, letter incisos, Roman lists and Figure/Table captions.
+  - Actual table-cell content is deliberately skipped in the full-format pass; use `Format selected table` for table objects.
+  - Figure/Table caption lines remain supported and are numbered using a single document scan for better performance.
