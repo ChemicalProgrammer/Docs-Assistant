@@ -78,24 +78,31 @@ function insertBreak(kind) {
 function getSelectedParagraphs_() {
   const selection = DocumentApp.getActiveDocument().getSelection();
   if (!selection) return [];
-  const out = [];
-  const seen = new Set();
+
+  const paragraphs = [];
 
   selection.getRangeElements().forEach(re => {
     let el = re.getElement();
-    while (el && el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-           el.getType() !== DocumentApp.ElementType.LIST_ITEM) {
+
+    // RangeElements can point to Text or other nested elements.
+    // Walk upward until reaching the owning paragraph/list item.
+    while (
+      el &&
+      el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+      el.getType() !== DocumentApp.ElementType.LIST_ITEM
+    ) {
       el = el.getParent();
     }
-    if (el) {
-      const key = String(el);
-      if (!seen.has(key)) {
-        seen.add(key);
-        out.push(el);
-      }
+
+    // Compare element objects directly instead of String(el).
+    // String(el) is not a reliable unique identifier and could cause
+    // multiple selected paragraphs to be treated as the same paragraph.
+    if (el && paragraphs.indexOf(el) === -1) {
+      paragraphs.push(el);
     }
   });
-  return out;
+
+  return paragraphs;
 }
 
 function eachSelectedParagraph_(fn) {
