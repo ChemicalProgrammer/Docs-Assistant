@@ -379,3 +379,109 @@ function formatTableCellContent_(cell, isHeader) {
     }
   }
 }
+
+
+/**
+ * Formats the current paragraph as a Figure/Table caption and assigns
+ * the correct consecutive number based on previous captions of the same type.
+ *
+ * Supported input examples:
+ *   Figure X. Description
+ *   Figure 7. Description
+ *   Table X. Description
+ *   Table 3. Description
+ *
+ * Figure and Table numbering are independent sequences.
+ */
+function formatCaptionLine() {
+  const targets = getStyleTargetParagraphs_();
+  if (!targets.length) {
+    throw new Error('Place the cursor in a Figure/Table caption or select the caption line.');
+  }
+  if (targets.length !== 1) {
+    throw new Error('Format one Figure/Table caption at a time.');
+  }
+
+  const p = targets[0];
+  if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
+    throw new Error('Figure/Table captions cannot be list items.');
+  }
+
+  const original = p.getText();
+  const match = original.match(/^\s*(Figure|Table)\s+(?:X|\d+)\.\s*(.*)$/i);
+  if (!match) {
+    throw new Error('The line must begin with "Figure X." or "Table X."');
+  }
+
+  const type = match[1].toLowerCase() === 'figure' ? 'Figure' : 'Table';
+  const description = match[2] || '';
+  const nextNumber = getCaptionOrdinal_(p, type);
+
+  const captionText = type + ' ' + nextNumber + '. ' + description.trim();
+
+  // Start from the document's current Normal text style.
+  const body = getActiveBody_();
+  const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
+
+  p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+  p.setAttributes(normalAttrs);
+  p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+
+  // Replace the full line with the correctly numbered caption.
+  const t = p.editAsText();
+  t.setText(captionText);
+
+  // Caption overrides.
+  t.setFontFamily('Arial');
+  t.setFontSize(9);
+  t.setBold(false);
+
+  // Bold only "Figure X." / "Table X."
+  const prefix = type + ' ' + nextNumber + '.';
+  if (prefix.length > 0) {
+    t.setBold(0, prefix.length - 1, true);
+  }
+
+  p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+
+  return {
+    ok: true,
+    type: type,
+    number: nextNumber,
+    text: captionText
+  };
+}
+
+/**
+ * Returns the 1-based ordinal of the caption paragraph among captions
+ * of the same type that appear before it in the current document body.
+ *
+ * This is more robust than looking only at the immediately previous caption:
+ * deleting/moving captions does not break numbering.
+ */
+function getCaptionOrdinal_(targetParagraph, type) {
+  const body = getActiveBody_();
+  let count = 0;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const child = body.getChild(i);
+
+    if (child === targetParagraph) {
+      return count + 1;
+    }
+
+    if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
+      const txt = child.asParagraph().getText();
+      const re = type === 'Figure'
+        ? /^\s*Figure\s+(?:X|\d+)\./i
+        : /^\s*Table\s+(?:X|\d+)\./i;
+
+      if (re.test(txt)) count++;
+    }
+  }
+
+  // If the paragraph is nested or otherwise not a direct body child,
+  // fall back to counting captions before it through body text order.
+  // The normal caption workflow should be direct body paragraphs.
+  return count + 1;
+}

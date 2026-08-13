@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.4
+# Docs Assistant v0.5.5
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -103,3 +103,15 @@ It is not written into the document or source code.
 - With no selection, the paragraph containing the cursor is treated as the complete target line.
 - With a multi-paragraph selection, styles still apply to every selected paragraph.
 - Heading sentence case, current named-style attributes, and explicit heading indents continue to apply to the whole target paragraph.
+
+
+## v0.5.5
+- Added Figure/Table caption button.
+- Input format: `Figure X. Description` or `Table X. Description` (existing numeric values also accepted).
+- Caption formatting:
+  - Normal text named style as base.
+  - Arial 9.
+  - Centered paragraph.
+  - Only `Figure N.` / `Table N.` is bold.
+- Figure and Table numbering are independent integer sequences.
+- The correct number is calculated by scanning all prior captions of the same type in document order, rather than relying on the immediately previous caption.
