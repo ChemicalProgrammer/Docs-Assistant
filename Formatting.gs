@@ -11,11 +11,98 @@ function applyNamedStyle(styleName) {
     H5: DocumentApp.ParagraphHeading.HEADING5,
     H6: DocumentApp.ParagraphHeading.HEADING6
   };
+
   const heading = map[styleName];
   if (!heading) throw new Error('Unknown style.');
 
-  eachSelectedParagraph_(p => p.setHeading(heading));
+  // Read the CURRENT named-style attributes from this document.
+  // This includes paragraph-level properties such as indents, alignment,
+  // line spacing, spacing before/after, plus the text-style attributes
+  // exposed by Google Docs.
+  const body = getActiveBody_();
+  const styleAttributes = body.getHeadingAttributes(heading);
+
+  eachSelectedParagraph_(p => {
+    // Heading buttons also normalize the heading text to sentence case.
+    // Example: "PROCESS OPERATING CONDITIONS" -> "Process operating conditions"
+    if (styleName !== 'NORMAL') {
+      const currentText = p.getText();
+      const converted = sentenceCaseHeading_(currentText);
+      if (converted !== currentText) {
+        p.editAsText().setText(converted);
+      }
+    }
+
+    // First assign the semantic named style.
+    p.setHeading(heading);
+
+    // Then explicitly copy the CURRENT named-style attributes into the
+    // paragraph. This is intentional: Google Docs may preserve direct
+    // paragraph formatting (especially indents) when only setHeading() is
+    // called. Applying the named-style attributes removes that discrepancy.
+    p.setAttributes(styleAttributes);
+
+    // Reassert the semantic style in case HEADING was included/affected
+    // by the attribute map.
+    p.setHeading(heading);
+
+    // Apply rich-text attributes explicitly as well so previous direct
+    // character formatting does not visually override the current style.
+    applyNamedTextAttributes_(p, styleAttributes);
+  });
+
   return true;
+}
+
+function getActiveBody_() {
+  const doc = DocumentApp.getActiveDocument();
+  try {
+    return doc.getActiveTab().asDocumentTab().getBody();
+  } catch (e) {
+    return doc.getBody();
+  }
+}
+
+function applyNamedTextAttributes_(paragraph, attrs) {
+  const text = paragraph.editAsText();
+  if (!text || text.getText().length === 0) return;
+
+  const textAttrs = {};
+  const supported = [
+    DocumentApp.Attribute.FONT_FAMILY,
+    DocumentApp.Attribute.FONT_SIZE,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.ITALIC,
+    DocumentApp.Attribute.UNDERLINE,
+    DocumentApp.Attribute.STRIKETHROUGH,
+    DocumentApp.Attribute.FOREGROUND_COLOR,
+    DocumentApp.Attribute.BACKGROUND_COLOR
+  ];
+
+  supported.forEach(attr => {
+    if (attrs[attr] !== undefined && attrs[attr] !== null) {
+      textAttrs[attr] = attrs[attr];
+    }
+  });
+
+  if (Object.keys(textAttrs).length) {
+    text.setAttributes(textAttrs);
+  }
+}
+
+function sentenceCaseHeading_(value) {
+  value = String(value || '');
+  if (!value) return value;
+
+  const lower = value.toLowerCase();
+
+  // Capitalize the first alphabetic character while preserving a leading
+  // number, section number, punctuation, etc.
+  // "2. PROCESS CONDITIONS" -> "2. Process conditions"
+  return lower.replace(
+    /[A-Za-zÁÉÍÓÚÜÑÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÇ]/,
+    ch => ch.toUpperCase()
+  );
 }
 
 function setParagraphSpacing(before, after, lineSpacing) {

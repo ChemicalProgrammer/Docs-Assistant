@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.1
+# Docs Assistant v0.5.2
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -78,3 +78,11 @@ It is not written into the document or source code.
   - Left indent: 0.06 in
   - Hanging indent: 0.25 in
 - Hanging indent is implemented as first-line position 0.06 in and wrapped-line start 0.31 in.
+
+
+## v0.5.2
+- Heading/Normal buttons now read the document's current named-style attributes with `Body.getHeadingAttributes()`.
+- The selected paragraphs receive those attributes explicitly after applying the named style, including the named style's current indentation and paragraph spacing.
+- Rich-text attributes from the current named style are also reapplied to prevent prior direct character formatting from overriding the style visually.
+- Heading 1–6 text is converted to sentence case automatically: first alphabetic character uppercase, remaining text lowercase.
+- Normal text does not change capitalization.
