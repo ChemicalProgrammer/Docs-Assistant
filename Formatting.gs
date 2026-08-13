@@ -46,20 +46,48 @@ function applyListPreset(type, continuePrevious) {
   const glyph = glyphs[type];
   if (!glyph) throw new Error('Unknown list type.');
 
+  const LEFT_IN = 0.06;
+  const HANGING_IN = 0.25;
+  const PT_PER_IN = 72;
+
+  // Google Docs hanging indent semantics:
+  // first line starts at LEFT_IN;
+  // wrapped/subsequent lines start LEFT_IN + HANGING_IN.
+  const firstLinePt = LEFT_IN * PT_PER_IN;
+  const startPt = (LEFT_IN + HANGING_IN) * PT_PER_IN;
+
   const paragraphs = getSelectedParagraphs_();
-  paragraphs.forEach((p, i) => {
-    const parent = p.getParent();
-    const idx = parent.getChildIndex(p);
-    const text = p.getText();
-    const listItem = parent.insertListItem(idx, text);
-    listItem.setGlyphType(glyph);
-    p.removeFromParent();
+
+  paragraphs.forEach(p => {
+    // Step 1: force the selected paragraph/list item to use the
+    // document's current Normal text named style before list formatting.
+    p.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+
+    let item = p;
+
+    // Step 2: if it is not already a ListItem, convert it.
+    // If it is already a ListItem, reuse it instead of recreating it.
+    if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) {
+      const parent = p.getParent();
+      const idx = parent.getChildIndex(p);
+      item = parent.insertListItem(idx, p.getText());
+      item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+      p.removeFromParent();
+    }
+
+    // Step 3: apply the requested list glyph and indentation.
+    item.setGlyphType(glyph);
+    item.setIndentStart(startPt);
+    item.setIndentFirstLine(firstLinePt);
   });
 
-  // Google Docs list continuation has limitations in DocumentApp.
-  // The flag is retained in the API/UI so a Docs API implementation can
-  // be added without changing the interface.
-  return { ok: true, continuePrevious: Boolean(continuePrevious) };
+  // Exact numbering continuation/restart still depends on the Docs API.
+  return {
+    ok: true,
+    continuePrevious: Boolean(continuePrevious),
+    leftIndentInches: LEFT_IN,
+    hangingIndentInches: HANGING_IN
+  };
 }
 
 function insertBreak(kind) {

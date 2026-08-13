@@ -1,4 +1,4 @@
-# Docs Assistant v0.5.0
+# Docs Assistant v0.5.1
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -69,3 +69,12 @@ It is not written into the document or source code.
 - Body: Arial 9, regular, 1.5 line spacing, left aligned, vertically centered.
 - Column widths are left automatic by not forcing a width.
 - Properties not exposed reliably by DocumentApp are not simulated.
+
+
+## v0.5.1
+- List formatting now first applies the document's current Normal text named style.
+- Existing list items are reused instead of recreated.
+- Bullet/number/letter/Roman list items use:
+  - Left indent: 0.06 in
+  - Hanging indent: 0.25 in
+- Hanging indent is implemented as first-line position 0.06 in and wrapped-line start 0.31 in.
