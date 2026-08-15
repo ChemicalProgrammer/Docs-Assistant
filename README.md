@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.0
+# Docs Assistant v0.7.1
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -189,3 +189,10 @@ It is not written into the document or source code.
 - Full Format now detects existing native headings/lists, decimal section headings, bullets, letter incisos, Roman lists, Figure/Table captions and Notes locally.
 - Manual list prefixes such as `a)`, `i)`, `1.` and `•` are removed before converting text into native Google Docs lists, avoiding duplicated markers.
 - Actual table-cell content remains excluded from Full Format and continues to use the dedicated table formatter.
+
+
+## v0.7.1
+- Note formatting now removes existing Note/Notes/Nota/Notas prefixes before applying the normalized `Note.` prefix.
+- Balanced outer parentheses are removed when the whole note is wrapped, e.g. `(Note: Abcdefg...)` -> `Note. Abcdefg...`.
+- If no Note/Nota prefix exists, the current line is preserved as the description and `Note.` is added.
+- Added spacing below the Figure/Table/Note button row so its description aligns visually with the other sections.

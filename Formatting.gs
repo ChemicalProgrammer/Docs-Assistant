@@ -468,8 +468,38 @@ function formatNoteLine() {
 function parseNoteLine_(value) {
   let source = String(value || '').trim();
 
-  // Accept Note/Notes/Nota/Notas in any capitalization and normalize to "Note."
-  source = source.replace(/^\s*(?:Notes?|Notas?)\b\s*[.:–—-]?\s*/i, '');
+  // Remove one or more outer parentheses when the whole line is wrapped.
+  // Example: "(Note: Abcdefg...)" -> "Note: Abcdefg..."
+  while (
+    source.length >= 2 &&
+    source.startsWith('(') &&
+    source.endsWith(')')
+  ) {
+    source = source.substring(1, source.length - 1).trim();
+  }
+
+  // Remove an existing Note/Notes/Nota/Notas prefix in any capitalization,
+  // including common punctuation such as :, ., -, en/em dash.
+  //
+  // Examples:
+  // "NOTE: Description"        -> "Description"
+  // "Nota. Description"        -> "Description"
+  // "(Note: Description)"      -> "Description"
+  // "((Notas - Description))"  -> "Description"
+  source = source.replace(
+    /^\s*(?:Notes?|Notas?)\b\s*[.:–—-]?\s*/i,
+    ''
+  );
+
+  // If removing the prefix exposed another balanced pair of parentheses
+  // around only the description, remove those too.
+  while (
+    source.length >= 2 &&
+    source.startsWith('(') &&
+    source.endsWith(')')
+  ) {
+    source = source.substring(1, source.length - 1).trim();
+  }
 
   return {description: source.trim()};
 }
