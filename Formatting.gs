@@ -186,53 +186,272 @@ function applyListPreset(type, continuePrevious) {
   if (!selection) throw new Error('Select paragraphs first.');
 
   const paragraphs = getSelectedParagraphs_();
-  paragraphs.forEach(p => applyListFormatToParagraph_(p, type));
+  if (!paragraphs.length) throw new Error('Select paragraphs first.');
+
+  if (type === 'LETTER') {
+    return applyLetterIncisoPreset_(paragraphs, Boolean(continuePrevious));
+  }
+
+  return applyNativeListPreset_(paragraphs, type, Boolean(continuePrevious));
+}
+
+function applyNativeListPreset_(paragraphs, type, continuePrevious) {
+  const glyph = getGlyphForListType_(type);
+  if (!glyph) throw new Error('Unknown list type.');
+
+  // "Continue" means: find the nearest compatible native list above
+  // the selection and reuse its list ID.
+  const previousItem = continuePrevious
+    ? findPreviousCompatibleListItem_(paragraphs[0], type)
+    : null;
+
+  let firstNewItem = null;
+  let lastItem = null;
+
+  paragraphs.forEach((p, index) => {
+    const item = recreateAsListItem_(p, type);
+
+    item.setGlyphType(glyph);
+    applyListIndents_(item);
+
+    if (index === 0) {
+      if (previousItem) {
+        item.setListId(previousItem);
+      }
+      firstNewItem = item;
+    } else {
+      // All selected items must belong to the same list.
+      item.setListId(previousItem || firstNewItem);
+    }
+
+    lastItem = item;
+  });
 
   return {
     ok: true,
-    continuePrevious: Boolean(continuePrevious),
+    continued: Boolean(previousItem),
+    requestedContinue: continuePrevious,
     leftIndentInches: 0.06,
     hangingIndentInches: 0.25
   };
 }
 
-function applyListFormatToParagraph_(p, type) {
+function applyLetterIncisoPreset_(paragraphs, continuePrevious) {
+  let ordinal = 1;
+
+  if (continuePrevious) {
+    const previous = findPreviousLetterOrdinal_(paragraphs[0]);
+    if (previous > 0) ordinal = previous + 1;
+  }
+
+  paragraphs.forEach(p => {
+    const paragraph = recreateAsParagraph_(p);
+    applyNamedStyleToParagraph_(paragraph, 'NORMAL');
+
+    let content = paragraph.getText();
+    content = stripAnyListPrefixText_(content);
+    paragraph.setText(numberToLetters_(ordinal) + ') ' + content.trim());
+
+    applyListIndents_(paragraph);
+    ordinal++;
+  });
+
+  return {
+    ok: true,
+    continued: continuePrevious && ordinal > paragraphs.length + 1,
+    requestedContinue: continuePrevious,
+    leftIndentInches: 0.06,
+    hangingIndentInches: 0.25,
+    suffix: ')'
+  };
+}
+
+function getGlyphForListType_(type) {
   const glyphs = {
     BULLET: DocumentApp.GlyphType.BULLET,
     NUMBER: DocumentApp.GlyphType.NUMBER,
-    LETTER: DocumentApp.GlyphType.LATIN_LOWER,
     ROMAN: DocumentApp.GlyphType.ROMAN_LOWER
   };
+  return glyphs[type] || null;
+}
 
-  const glyph = glyphs[type];
-  if (!glyph) throw new Error('Unknown list type.');
+function recreateAsListItem_(p, type) {
+  const parent = p.getParent();
+  const idx = parent.getChildIndex(p);
 
-  const LEFT_IN = 0.06;
-  const HANGING_IN = 0.25;
-  const PT_PER_IN = 72;
-  const firstLinePt = LEFT_IN * PT_PER_IN;
-  const startPt = (LEFT_IN + HANGING_IN) * PT_PER_IN;
+  let content = p.getText();
+  content = stripAnyListPrefixText_(content);
 
-  // Always start from the CURRENT Normal text style.
-  applyNamedStyleToParagraph_(p, 'NORMAL');
+  const item = parent.insertListItem(idx, content);
+  p.removeFromParent();
 
-  let item = p;
+  applyNamedStyleToParagraph_(item, 'NORMAL');
+  return item;
+}
 
-  // Reuse an existing list item; otherwise convert the paragraph.
-  if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) {
-    const parent = p.getParent();
-    const idx = parent.getChildIndex(p);
-    item = parent.insertListItem(idx, p.getText());
-    p.removeFromParent();
-
-    // Converting to ListItem creates a new element, so reapply Normal text.
-    applyNamedStyleToParagraph_(item, 'NORMAL');
+function recreateAsParagraph_(p) {
+  if (p.getType() === DocumentApp.ElementType.PARAGRAPH) {
+    return p.asParagraph();
   }
 
-  item.setGlyphType(glyph);
+  const parent = p.getParent();
+  const idx = parent.getChildIndex(p);
+  const paragraph = parent.insertParagraph(idx, p.getText());
+  p.removeFromParent();
+  return paragraph;
+}
+
+function applyListIndents_(item) {
+  const PT_PER_IN = 72;
+  const firstLinePt = 0.06 * PT_PER_IN;
+  const startPt = (0.06 + 0.25) * PT_PER_IN;
+
   item.setIndentStart(startPt);
   item.setIndentFirstLine(firstLinePt);
+  item.setIndentEnd(0);
+}
 
+function findPreviousCompatibleListItem_(target, type) {
+  const parent = target.getParent();
+  if (!parent) return null;
+
+  const targetIndex = parent.getChildIndex(target);
+  const glyph = getGlyphForListType_(type);
+
+  for (let i = targetIndex - 1; i >= 0; i--) {
+    const child = parent.getChild(i);
+
+    if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
+
+    const item = child.asListItem();
+    try {
+      if (item.getGlyphType() === glyph) {
+        return item;
+      }
+    } catch (e) {}
+  }
+
+  return null;
+}
+
+function findPreviousLetterOrdinal_(target) {
+  const parent = target.getParent();
+  if (!parent) return 0;
+
+  const targetIndex = parent.getChildIndex(target);
+
+  for (let i = targetIndex - 1; i >= 0; i--) {
+    const child = parent.getChild(i);
+
+    // Manual inciso created by this Add-on: a), b), aa), etc.
+    if (
+      child.getType() === DocumentApp.ElementType.PARAGRAPH ||
+      child.getType() === DocumentApp.ElementType.LIST_ITEM
+    ) {
+      const value = child.getText();
+      const m = value.match(/^\s*([A-Za-z]+)\)\s+/);
+      if (m) return lettersToNumber_(m[1]);
+    }
+
+    // Compatibility with an older/native LATIN list:
+    if (child.getType() === DocumentApp.ElementType.LIST_ITEM) {
+      const item = child.asListItem();
+      try {
+        const glyphName = String(item.getGlyphType()).toUpperCase();
+        if (glyphName.indexOf('LATIN') >= 0) {
+          return getNativeListOrdinal_(item);
+        }
+      } catch (e) {}
+    }
+  }
+
+  return 0;
+}
+
+function getNativeListOrdinal_(targetItem) {
+  const body = getActiveBody_();
+  let count = 0;
+  let targetListId = '';
+
+  try {
+    targetListId = targetItem.getListId();
+  } catch (e) {
+    return 0;
+  }
+
+  if (!targetListId) return 0;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const child = body.getChild(i);
+    if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
+
+    const item = child.asListItem();
+    try {
+      if (item.getListId() === targetListId) count++;
+      if (item === targetItem) return count;
+    } catch (e) {}
+  }
+
+  return count;
+}
+
+function numberToLetters_(number) {
+  let n = Math.max(1, Number(number) || 1);
+  let result = '';
+
+  while (n > 0) {
+    n--;
+    result = String.fromCharCode(97 + (n % 26)) + result;
+    n = Math.floor(n / 26);
+  }
+
+  return result;
+}
+
+function lettersToNumber_(letters) {
+  const value = String(letters || '').toLowerCase();
+  let result = 0;
+
+  for (let i = 0; i < value.length; i++) {
+    const code = value.charCodeAt(i) - 96;
+    if (code < 1 || code > 26) return 0;
+    result = result * 26 + code;
+  }
+
+  return result;
+}
+
+function stripAnyListPrefixText_(value) {
+  let text = String(value || '');
+
+  text = text.replace(/^\s*[•●○▪◦‣⁃-]\s+/, '');
+  text = text.replace(/^\s*\d+[.)]\s+/, '');
+  text = text.replace(/^\s*[A-Za-z]+[.)]\s+/, '');
+  text = text.replace(/^\s*[ivxlcdm]+[.)]\s+/i, '');
+
+  return text;
+}
+
+/**
+ * Backward-compatible helper used by Full Smart Format.
+ */
+function applyListFormatToParagraph_(p, type) {
+  if (type === 'LETTER') {
+    const paragraph = recreateAsParagraph_(p);
+    applyNamedStyleToParagraph_(paragraph, 'NORMAL');
+
+    const original = paragraph.getText();
+    const existing = original.match(/^\s*([A-Za-z]+)[.)]\s+/);
+    const ordinal = existing ? lettersToNumber_(existing[1]) : 1;
+
+    paragraph.setText(numberToLetters_(ordinal) + ') ' + stripAnyListPrefixText_(original).trim());
+    applyListIndents_(paragraph);
+    return paragraph;
+  }
+
+  const item = recreateAsListItem_(p, type);
+  item.setGlyphType(getGlyphForListType_(type));
+  applyListIndents_(item);
   return item;
 }
 
@@ -288,7 +507,7 @@ function eachSelectedParagraph_(fn) {
 
 function formatSelectedTable() {
   const table = getActiveTable_();
-  if (!table) throw new Error('Place the cursor inside a table or select content inside a table.');
+  if (!table) throw new Error('Table formatting is only allowed when the cursor/selection is entirely inside one table.');
 
   table.setBorderColor('#000000');
   table.setBorderWidth(1);
@@ -314,18 +533,34 @@ function formatSelectedTable() {
 function getActiveTable_() {
   const doc = DocumentApp.getActiveDocument();
   const selection = doc.getSelection();
+
   if (selection) {
     const ranges = selection.getRangeElements();
+    let foundTable = null;
+
     for (let i = 0; i < ranges.length; i++) {
       const table = findAncestorTable_(ranges[i].getElement());
-      if (table) return table;
+
+      // Safety: if even one selected element is outside a table,
+      // do not guess which table the user intended.
+      if (!table) return null;
+
+      if (!foundTable) {
+        foundTable = table;
+      } else if (table !== foundTable) {
+        // Safety: selection spans more than one table.
+        return null;
+      }
     }
+
+    return foundTable;
   }
+
   const cursor = doc.getCursor();
   if (cursor) {
-    const table = findAncestorTable_(cursor.getElement());
-    if (table) return table;
+    return findAncestorTable_(cursor.getElement());
   }
+
   return null;
 }
 
@@ -400,6 +635,9 @@ function formatCaptionLine(captionType) {
   }
 
   const p = targets[0];
+  if (isInsideTable_(p)) {
+    throw new Error('Figure/Table captions cannot be applied inside a table. Use Format selected table instead.');
+  }
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
     throw new Error('Captions cannot be list items.');
   }
@@ -455,6 +693,9 @@ function formatNoteLine() {
   }
 
   const p = targets[0];
+  if (isInsideTable_(p)) {
+    throw new Error('Note formatting cannot be applied inside a table. Use Format selected table instead.');
+  }
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
     throw new Error('Notes cannot be list items.');
   }
@@ -466,45 +707,56 @@ function formatNoteLine() {
 }
 
 function parseNoteLine_(value) {
-  let source = String(value || '').trim();
+  const original = String(value || '').trim();
+  let source = original;
 
-  // Remove one or more outer parentheses when the whole line is wrapped.
-  // Example: "(Note: Abcdefg...)" -> "Note: Abcdefg..."
-  while (
-    source.length >= 2 &&
-    source.startsWith('(') &&
-    source.endsWith(')')
-  ) {
-    source = source.substring(1, source.length - 1).trim();
-  }
-
-  // Remove an existing Note/Notes/Nota/Notas prefix in any capitalization,
-  // including common punctuation such as :, ., -, en/em dash.
-  //
-  // Examples:
-  // "NOTE: Description"        -> "Description"
-  // "Nota. Description"        -> "Description"
-  // "(Note: Description)"      -> "Description"
-  // "((Notas - Description))"  -> "Description"
-  source = source.replace(
-    /^\s*(?:Notes?|Notas?)\b\s*[.:–—-]?\s*/i,
-    ''
+  // Detect an existing Note/Notes/Nota/Notas marker after optional opening
+  // wrappers. This intentionally handles cases such as:
+  //   (Note: Abcdefg...)
+  //   ((NOTA - Abcdefg...))
+  //   [Notes. Abcdefg...]
+  //   Note (Abcdefg...)
+  const prefix = source.match(
+    /^\s*[\(\[\{]*\s*(?:Notes?|Notas?)\b\s*[\)\]\}]*\s*[.:–—-]?\s*/i
   );
 
-  // If removing the prefix exposed another balanced pair of parentheses
-  // around only the description, remove those too.
+  // No existing Note/Nota marker: do NOT clean or reinterpret the line.
+  // The formatter will simply prepend "Note. ".
+  if (!prefix) {
+    return {
+      description: original,
+      hadNotePrefix: false
+    };
+  }
+
+  source = source.substring(prefix[0].length).trim();
+
+  // If the existing note was wrapped, remove trailing closing wrappers
+  // without deleting the description's punctuation.
+  source = source.replace(/\s*[\)\]\}]+\s*$/, '').trim();
+
+  // A second wrapper around only the description is also normalized.
   while (
     source.length >= 2 &&
-    source.startsWith('(') &&
-    source.endsWith(')')
+    (
+      (source.startsWith('(') && source.endsWith(')')) ||
+      (source.startsWith('[') && source.endsWith(']')) ||
+      (source.startsWith('{') && source.endsWith('}'))
+    )
   ) {
     source = source.substring(1, source.length - 1).trim();
   }
 
-  return {description: source.trim()};
+  return {
+    description: source,
+    hadNotePrefix: true
+  };
 }
 
 function formatNoteParagraph_(p, description) {
+  if (isInsideTable_(p)) {
+    throw new Error('Note formatting is not allowed inside a table.');
+  }
   const noteText = 'Note. ' + String(description || '').trim();
 
   applyNamedStyleToParagraph_(p, 'NORMAL');
@@ -572,6 +824,9 @@ function parseCaptionLine_(value) {
 }
 
 function formatCaptionParagraph_(p, type, description, number) {
+  if (isInsideTable_(p)) {
+    throw new Error('Caption formatting is not allowed inside a table.');
+  }
   const captionText = type + ' ' + number + '. ' + String(description || '').trim();
 
   // Start from CURRENT Normal text style, then apply caption overrides.
@@ -725,7 +980,6 @@ function smartFormatSelection() {
         break;
 
       case 'letter':
-        stripManualListPrefix_(p, 'LETTER');
         applyListFormatToParagraph_(p, 'LETTER');
         lists++;
         break;

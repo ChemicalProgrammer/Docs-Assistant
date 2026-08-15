@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.1
+# Docs Assistant v0.7.2
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -196,3 +196,23 @@ It is not written into the document or source code.
 - Balanced outer parentheses are removed when the whole note is wrapped, e.g. `(Note: Abcdefg...)` -> `Note. Abcdefg...`.
 - If no Note/Nota prefix exists, the current line is preserved as the description and `Note.` is added.
 - Added spacing below the Figure/Table/Note button row so its description aligns visually with the other sections.
+
+
+## v0.7.2
+- Note parser rebuilt:
+  - `(Note: Abcdefg...)` -> `Note. Abcdefg...`
+  - `(Nota: Abcdefg...)` -> `Note. Abcdefg...`
+  - existing Note/Notes/Nota/Notas plus wrappers/punctuation are removed;
+  - if no Note/Nota marker exists, the original line is preserved and only `Note.` is prepended.
+- Lists:
+  - letter incisos are rendered explicitly as `a)`, `b)`, `c)` to guarantee the required suffix;
+  - native numeric lists keep the `1.`, `2.`, `3.` convention;
+  - all list types keep Left 0.06 in / Hanging 0.25 in.
+- Continue previous numbering:
+  - native number/Roman/bullet lists search upward for the nearest compatible ListItem and reuse its list ID;
+  - letter incisos search upward for the previous letter and continue from it;
+  - Restart creates a new native list for numeric/Roman/bullet lists and starts letter incisos at `a)`.
+- Safety guards:
+  - Table formatting only runs when the cursor/selection is entirely inside one actual table.
+  - Figure/Table caption and Note formatting are blocked inside table cells.
+  - Full Smart Format continues to skip table-cell content.
