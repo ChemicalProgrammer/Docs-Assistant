@@ -226,27 +226,39 @@ function applyStructuredBlocks_(blocks) {
 
 
 function classifyFormattingPlanWithGemini_(items) {
+  if (!items || !items.length) return [];
+
+  const results = [];
+  const BATCH_SIZE = 24;
+
+  for (let offset = 0; offset < items.length; offset += BATCH_SIZE) {
+    const batch = items.slice(offset, offset + BATCH_SIZE);
+    const batchResult = classifyFormattingBatchWithGemini_(batch);
+    batchResult.forEach(x => results.push(x));
+  }
+
+  return results;
+}
+
+function classifyFormattingBatchWithGemini_(items) {
   const prompt = [
-    'Classify paragraphs from a technical Google Docs document.',
-    'Do NOT rewrite any text. Return only JSON.',
+    'Classify ambiguous paragraphs from a technical Google Docs document.',
+    'Do NOT rewrite text. Return ONLY valid JSON.',
+    '',
     'Allowed types:',
-    'normal, heading1, heading2, heading3, heading4, heading5, heading6, bullet, number, letter, roman, figure_caption, table_caption.',
+    'normal, heading1, heading2, heading3, heading4, heading5, heading6, number.',
     '',
-    'Rules:',
+    'Important rules:',
     '- Preserve every id exactly.',
-    '- If fixedType is not empty, return that exact type.',
-    '- heading1 = main numbered section/title, often 1. Title.',
-    '- heading2 = subsection, often 1.1 Title.',
-    '- heading3 = deeper subsection, often 1.1.1 Title.',
-    '- heading4/5/6 = progressively deeper headings when clearly applicable.',
-    '- bullet = unordered bullet item.',
-    '- number = ordered numeric list item that is NOT a section heading.',
-    '- letter = inciso/list item such as a), b), c), or equivalent.',
-    '- roman = roman numeral list item such as i., ii., iii. or i), ii).',
-    '- normal = ordinary prose.',
-    '- Use surrounding paragraphs to distinguish numbered headings from numbered lists.',
+    '- These inputs are intentionally ambiguous; obvious bullets, incisos, decimal subsections, captions and notes were already classified locally.',
+    '- heading1 = a main section title. A line like "1. Introduction" is usually heading1 when surrounded by prose/subsections.',
+    '- number = an ordered-list item, not a document section heading.',
+    '- Unnumbered short title-like text may be a heading if context supports it.',
+    '- Ordinary prose is normal.',
+    '- Use previous and next text as context.',
+    '- Do not infer Figure/Table captions unless the text explicitly says Figure/Table; those are handled elsewhere.',
     '',
-    'Return exactly this shape:',
+    'Return exactly:',
     '{"items":[{"id":"p0","type":"normal"}]}',
     '',
     'INPUT:',
@@ -256,26 +268,39 @@ function classifyFormattingPlanWithGemini_(items) {
   let response = callGemini_(prompt).trim();
   response = response.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
 
+  // Recover if the model added a short preamble or trailing text.
+  const firstBrace = response.indexOf('{');
+  const lastBrace = response.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    response = response.substring(firstBrace, lastBrace + 1);
+  }
+
   let data;
   try {
     data = JSON.parse(response);
   } catch (e) {
-    throw new Error('Gemini could not classify the selected document structure.');
+    // A failed batch should not destroy the full-format operation.
+    // The caller will fall back omitted ids to Normal text.
+    return [];
   }
 
-  if (!data.items || !Array.isArray(data.items)) {
-    throw new Error('Gemini returned an invalid formatting plan.');
-  }
+  if (!data.items || !Array.isArray(data.items)) return [];
 
   const allowed = {
     normal:true,
     heading1:true, heading2:true, heading3:true,
     heading4:true, heading5:true, heading6:true,
-    bullet:true, number:true, letter:true, roman:true,
-    figure_caption:true, table_caption:true
+    number:true
   };
 
   return data.items
-    .filter(x => x && typeof x.id === 'string' && allowed[String(x.type || '').toLowerCase()])
-    .map(x => ({id:x.id, type:String(x.type).toLowerCase()}));
+    .filter(x =>
+      x &&
+      typeof x.id === 'string' &&
+      allowed[String(x.type || '').toLowerCase()]
+    )
+    .map(x => ({
+      id: x.id,
+      type: String(x.type).toLowerCase()
+    }));
 }

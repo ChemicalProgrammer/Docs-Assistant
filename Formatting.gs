@@ -444,6 +444,53 @@ function parseCaptionDescriptionOnly_(value) {
   return {description: remainder.trim()};
 }
 
+
+function formatNoteLine() {
+  const targets = getStyleTargetParagraphs_();
+  if (!targets.length) {
+    throw new Error('Place the cursor in the note line or select it.');
+  }
+  if (targets.length !== 1) {
+    throw new Error('Format one note at a time.');
+  }
+
+  const p = targets[0];
+  if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
+    throw new Error('Notes cannot be list items.');
+  }
+
+  const parsed = parseNoteLine_(p.getText());
+  formatNoteParagraph_(p, parsed.description);
+
+  return {ok:true, text:p.getText()};
+}
+
+function parseNoteLine_(value) {
+  let source = String(value || '').trim();
+
+  // Accept Note/Notes/Nota/Notas in any capitalization and normalize to "Note."
+  source = source.replace(/^\s*(?:Notes?|Notas?)\b\s*[.:–—-]?\s*/i, '');
+
+  return {description: source.trim()};
+}
+
+function formatNoteParagraph_(p, description) {
+  const noteText = 'Note. ' + String(description || '').trim();
+
+  applyNamedStyleToParagraph_(p, 'NORMAL');
+
+  const t = p.editAsText();
+  t.setText(noteText);
+  t.setFontFamily('Arial');
+  t.setFontSize(9);
+  t.setBold(false);
+
+  const prefix = 'Note.';
+  t.setBold(0, prefix.length - 1, true);
+
+  p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+}
+
 function parseCaptionLine_(value) {
   const source = String(value || '');
 
@@ -548,60 +595,78 @@ function smartFormatSelection() {
   }
 
   const allTargets = getSelectedParagraphs_();
-  if (!allTargets.length) throw new Error('No paragraphs were found in the selection.');
+  if (!allTargets.length) {
+    throw new Error('No paragraphs were found in the selection.');
+  }
 
-  // Skip paragraphs inside actual table cells. Tables keep their dedicated button.
+  // Actual table contents keep their dedicated formatter.
   const targets = allTargets.filter(p => !isInsideTable_(p));
   const skippedTableParagraphs = allTargets.length - targets.length;
 
   const items = [];
   const targetById = {};
+  const ambiguous = [];
 
   targets.forEach((p, index) => {
     const value = p.getText();
     if (!value.trim()) return;
 
     const id = 'p' + index;
-    const parsedCaption = parseCaptionLine_(value);
-    let currentList = '';
+    const detected = detectFormattingType_(p, value);
 
-    if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
-      try {
-        currentList = String(p.asListItem().getGlyphType());
-      } catch (e) {}
-    }
-
-    items.push({
+    const item = {
       id: id,
       text: value,
-      fixedType: parsedCaption
-        ? (parsedCaption.type === 'Figure' ? 'figure_caption' : 'table_caption')
-        : '',
-      existingList: currentList
-    });
+      fixedType: detected || '',
+      existingHeading: getCurrentHeadingName_(p),
+      existingList: getCurrentListType_(p)
+    };
+
+    items.push(item);
     targetById[id] = p;
+
+    if (!detected) ambiguous.push(item);
   });
 
-  if (!items.length) throw new Error('The selection contains no text paragraphs to format.');
+  if (!items.length) {
+    throw new Error('The selection contains no text paragraphs to format.');
+  }
 
-  const plan = classifyFormattingPlanWithGemini_(items);
-  const planById = {};
-  plan.forEach(x => planById[x.id] = x.type);
+  // Gemini is used only where document structure is genuinely ambiguous.
+  // This is more reliable for long selections than asking it to classify
+  // obvious bullets, captions and numbered subsections too.
+  const aiPlan = ambiguous.length
+    ? classifyFormattingPlanWithGemini_(addFormattingContext_(items, ambiguous))
+    : [];
 
-  // Compute caption numbers BEFORE changing any selected caption text.
-  // This avoids rescanning the document once per caption.
+  const typeById = {};
+  items.forEach(item => {
+    if (item.fixedType) typeById[item.id] = item.fixedType;
+  });
+  aiPlan.forEach(x => {
+    if (!typeById[x.id]) typeById[x.id] = x.type;
+  });
+
+  // Any item omitted by Gemini safely falls back to Normal text.
+  items.forEach(item => {
+    if (!typeById[item.id]) typeById[item.id] = 'normal';
+  });
+
+  // Captions already recognizable from their text are numbered in one scan.
   const captionNumbers = buildCaptionNumberPlan_(items, targetById);
 
   let formatted = 0;
-  let captions = 0;
-  let lists = 0;
   let headings = 0;
+  let lists = 0;
+  let captions = 0;
+  let notes = 0;
+  let normal = 0;
 
   items.forEach(item => {
     let p = targetById[item.id];
     if (!p) return;
 
-    let type = item.fixedType || planById[item.id] || 'normal';
+    const type = typeById[item.id];
 
     switch (type) {
       case 'heading1':
@@ -618,28 +683,55 @@ function smartFormatSelection() {
         applyNamedStyleToParagraph_(p, 'H6'); headings++; break;
 
       case 'bullet':
-        applyListFormatToParagraph_(p, 'BULLET'); lists++; break;
+        stripManualListPrefix_(p, 'BULLET');
+        applyListFormatToParagraph_(p, 'BULLET');
+        lists++;
+        break;
+
       case 'number':
-        applyListFormatToParagraph_(p, 'NUMBER'); lists++; break;
+        stripManualListPrefix_(p, 'NUMBER');
+        applyListFormatToParagraph_(p, 'NUMBER');
+        lists++;
+        break;
+
       case 'letter':
-        applyListFormatToParagraph_(p, 'LETTER'); lists++; break;
+        stripManualListPrefix_(p, 'LETTER');
+        applyListFormatToParagraph_(p, 'LETTER');
+        lists++;
+        break;
+
       case 'roman':
-        applyListFormatToParagraph_(p, 'ROMAN'); lists++; break;
+        stripManualListPrefix_(p, 'ROMAN');
+        applyListFormatToParagraph_(p, 'ROMAN');
+        lists++;
+        break;
 
       case 'figure_caption':
       case 'table_caption': {
         const parsed = parseCaptionLine_(p.getText());
         if (parsed) {
-          const n = captionNumbers[item.id] || getCaptionOrdinal_(p, parsed.type);
-          formatCaptionParagraph_(p, parsed.type, parsed.description, n);
+          const captionType = type === 'figure_caption' ? 'Figure' : 'Table';
+          const n = captionNumbers[item.id] || getCaptionOrdinal_(p, captionType);
+          formatCaptionParagraph_(p, captionType, parsed.description, n);
           captions++;
+        } else {
+          // If Gemini inferred a caption without an explicit prefix, do not
+          // invent whether it is Figure/Table here; keep the content safe.
+          applyNamedStyleToParagraph_(p, 'NORMAL');
+          normal++;
         }
         break;
       }
 
+      case 'note':
+        formatNoteParagraph_(p, parseNoteLine_(p.getText()).description);
+        notes++;
+        break;
+
       case 'normal':
       default:
         applyNamedStyleToParagraph_(p, 'NORMAL');
+        normal++;
         break;
     }
 
@@ -652,8 +744,132 @@ function smartFormatSelection() {
     headings: headings,
     lists: lists,
     captions: captions,
+    notes: notes,
+    normal: normal,
+    aiClassified: ambiguous.length,
     skippedTableParagraphs: skippedTableParagraphs
   };
+}
+
+function detectFormattingType_(p, value) {
+  const text = String(value || '').trim();
+  if (!text) return 'normal';
+
+  // Preserve an existing native heading assignment.
+  const existingHeading = getCurrentHeadingName_(p);
+  if (/^heading[1-6]$/.test(existingHeading)) return existingHeading;
+
+  // Existing native list items are highly reliable evidence.
+  const existingList = getCurrentListType_(p);
+  if (existingList) return existingList;
+
+  const caption = parseCaptionLine_(text);
+  if (caption) {
+    return caption.type === 'Figure' ? 'figure_caption' : 'table_caption';
+  }
+
+  if (/^\s*(?:Notes?|Notas?)\b(?:\s*[.:–—-]|\s+)/i.test(text)) {
+    return 'note';
+  }
+
+  // Explicit textual list markers.
+  if (/^\s*[•●○▪◦‣⁃-]\s+/.test(text)) return 'bullet';
+
+  // Roman must be tested before letters because "i)" is also a letter.
+  if (/^\s*(?:[ivxlcdm]+)[.)]\s+/i.test(text)) return 'roman';
+  if (/^\s*[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][.)]\s+/.test(text)) return 'letter';
+
+  // Decimal section numbering is deterministic:
+  // 1.1 -> H2, 1.1.1 -> H3, etc.
+  const section = text.match(/^\s*(\d+(?:\.\d+)+)\.?\s+\S/);
+  if (section) {
+    const depth = section[1].split('.').length;
+    return 'heading' + Math.min(depth, 6);
+  }
+
+  // A plain integer prefix such as "1. ..." is ambiguous: it may be H1
+  // or an ordered list. Leave it to Gemini with surrounding context.
+  // Unnumbered short title-like lines are also left to Gemini.
+
+  // Long prose ending in normal sentence punctuation is safe to classify
+  // locally, reducing Gemini load on large documents.
+  const words = text.split(/\s+/).length;
+  if (words >= 18 && /[.!?]$/.test(text)) return 'normal';
+
+  return '';
+}
+
+function getCurrentHeadingName_(p) {
+  try {
+    const h = String(p.getHeading());
+    const map = {
+      HEADING1:'heading1', HEADING2:'heading2', HEADING3:'heading3',
+      HEADING4:'heading4', HEADING5:'heading5', HEADING6:'heading6'
+    };
+    return map[h] || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function getCurrentListType_(p) {
+  if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) return '';
+
+  try {
+    const glyph = String(p.asListItem().getGlyphType()).toUpperCase();
+
+    if (glyph.indexOf('ROMAN') >= 0) return 'roman';
+    if (glyph.indexOf('LATIN') >= 0 || glyph.indexOf('LETTER') >= 0) return 'letter';
+    if (glyph.indexOf('NUMBER') >= 0 || glyph.indexOf('DECIMAL') >= 0) return 'number';
+    return 'bullet';
+  } catch (e) {
+    return 'bullet';
+  }
+}
+
+function addFormattingContext_(allItems, ambiguousItems) {
+  const indexById = {};
+  allItems.forEach((x, i) => indexById[x.id] = i);
+
+  return ambiguousItems.map(item => {
+    const i = indexById[item.id];
+    return {
+      id: item.id,
+      text: item.text,
+      existingHeading: item.existingHeading || '',
+      existingList: item.existingList || '',
+      previous: i > 0 ? allItems[i - 1].text : '',
+      next: i < allItems.length - 1 ? allItems[i + 1].text : ''
+    };
+  });
+}
+
+function stripManualListPrefix_(p, type) {
+  // Native ListItems do not contain their rendered glyph in getText(),
+  // so no prefix should be stripped from them.
+  if (p.getType() === DocumentApp.ElementType.LIST_ITEM) return;
+
+  const original = p.getText();
+  let cleaned = original;
+
+  switch (type) {
+    case 'BULLET':
+      cleaned = original.replace(/^\s*[•●○▪◦‣⁃-]\s+/, '');
+      break;
+    case 'NUMBER':
+      cleaned = original.replace(/^\s*\d+[.)]\s+/, '');
+      break;
+    case 'LETTER':
+      cleaned = original.replace(/^\s*[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][.)]\s+/, '');
+      break;
+    case 'ROMAN':
+      cleaned = original.replace(/^\s*[ivxlcdm]+[.)]\s+/i, '');
+      break;
+  }
+
+  if (cleaned !== original) {
+    p.editAsText().setText(cleaned);
+  }
 }
 
 function isInsideTable_(el) {

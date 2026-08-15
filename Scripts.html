@@ -55,8 +55,15 @@ function fullSmartFormat(e){
  if(!beginTask(e.currentTarget,'Analyzing…'))return;
  google.script.run
    .withSuccessHandler(r=>{
-     const skipped=r && r.skippedTableParagraphs ? ` · ${r.skippedTableParagraphs} table-cell paragraphs skipped` : '';
-     endTask(true,`Complete format applied${skipped}`);
+     const parts=[];
+     if(r){
+       if(r.headings) parts.push(`${r.headings} headings`);
+       if(r.lists) parts.push(`${r.lists} lists`);
+       if(r.captions) parts.push(`${r.captions} captions`);
+       if(r.notes) parts.push(`${r.notes} notes`);
+       if(r.skippedTableParagraphs) parts.push(`${r.skippedTableParagraphs} table-cell paragraphs skipped`);
+     }
+     endTask(true,parts.length ? `Complete format · ${parts.join(' · ')}` : 'Complete format applied');
    })
    .withFailureHandler(fail)
    .smartFormatSelection();
@@ -65,6 +72,9 @@ function styleText(s,e){runServer(e.currentTarget,'…','applyNamedStyle',[s],'S
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
+function formatNote(e){
+ runServer(e.currentTarget,'…','formatNoteLine',[],'Note formatted');
+}
 function formatCaption(type,e){
  runServer(e.currentTarget,'…','formatCaptionLine',[type],type === 'figure' ? 'Figure caption formatted' : 'Table caption formatted');
 }
