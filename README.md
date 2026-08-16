@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.7
+# Docs Assistant v0.7.8
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -261,3 +261,12 @@ It is not written into the document or source code.
   - automatic sequence below it is preserved.
 - Plain paragraphs still use the stable v0.7.5 manual-list fallback and its existing Left 0.06 in / Hanging 0.25 in behavior.
 - Full Smart Format uses the same native-list preservation rule.
+
+
+## v0.7.8
+- Existing native Google Docs list items now receive the required local indentation while preserving automatic numbering:
+  - Left: 0.06 in
+  - Hanging: 0.25 in
+  - Right: 0 in
+- The ListItem itself is preserved: listId and glyph type are not changed.
+- Cursor-only formatting remains supported.

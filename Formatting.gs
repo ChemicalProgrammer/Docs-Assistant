@@ -284,18 +284,36 @@ function isExistingNativeListOfType_(p, type) {
 }
 
 function normalizeExistingNativeListParagraph_(item) {
-  // Keep the native list structure, automatic numbering, listId, glyph
-  // definition and current list indentation completely untouched.
+  // Preserve automatic numbering/list structure:
+  // - DO NOT change listId
+  // - DO NOT change glyph type
+  // - DO NOT recreate the ListItem
   //
-  // Only mark the paragraph as Normal text. Do NOT use the broader
-  // applyNamedStyleToParagraph_() here because that copies paragraph-level
-  // attributes and could disturb native list geometry.
+  // Only normalize the paragraph style + the local indentation required
+  // by this Add-on.
+
   try {
     item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
   } catch (e) {}
 
-  // Prevent accidental whole-line bold inherited from a preceding heading,
-  // but preserve mixed inline formatting whenever the item already has it.
+  // Required list indentation:
+  // Left = 0.06 in
+  // Hanging = 0.25 in
+  // Right = 0
+  //
+  // In Google Docs paragraph geometry this means:
+  // first line starts at 0.06 in,
+  // wrapped lines start at 0.31 in.
+  const PT_PER_IN = 72;
+  const firstLinePt = 0.06 * PT_PER_IN;
+  const startPt = (0.06 + 0.25) * PT_PER_IN;
+
+  item.setIndentFirstLine(firstLinePt);
+  item.setIndentStart(startPt);
+  item.setIndentEnd(0);
+
+  // Prevent accidental whole-line bold inherited from the paragraph above,
+  // while preserving mixed inline formatting.
   const text = item.editAsText();
   const value = text.getText();
   if (!value) return;
@@ -304,8 +322,6 @@ function normalizeExistingNativeListParagraph_(item) {
   const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
   const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
 
-  // Only clear bold when the entire item is uniformly bold. If it has mixed
-  // rich text (e.g. "Preventive Action:" bold + body regular), leave it alone.
   if (normalBold !== true) {
     const boldState = text.isBold();
     if (boldState === true) {
