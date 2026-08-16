@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.2
+# Docs Assistant v0.7.3
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -216,3 +216,14 @@ It is not written into the document or source code.
   - Table formatting only runs when the cursor/selection is entirely inside one actual table.
   - Figure/Table caption and Note formatting are blocked inside table cells.
   - Full Smart Format continues to skip table-cell content.
+
+
+## v0.7.3
+- Fixed neighboring numbering/heading corruption when formatting bullets or native lists.
+- Root cause: a newly inserted Google Docs ListItem can temporarily inherit the listId of a nearby multilevel heading/outline list. Changing its glyph before detaching it can modify that shared list scheme.
+- Native list workflow now:
+  1. finds the intended compatible previous list when Continue is enabled, or creates an isolated temporary listId when restarting;
+  2. assigns the safe listId first;
+  3. only then applies Bullet/Number/Roman glyph and indentation.
+- Continue numbering now also checks the expected Add-on indentation (Left 0.06 in / Hanging 0.25 in), preventing numbered headings from being mistaken for the preceding list.
+- Full Smart Format's native-list helper uses the same isolation safeguard.

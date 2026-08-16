@@ -199,33 +199,47 @@ function applyNativeListPreset_(paragraphs, type, continuePrevious) {
   const glyph = getGlyphForListType_(type);
   if (!glyph) throw new Error('Unknown list type.');
 
-  // "Continue" means: find the nearest compatible native list above
-  // the selection and reuse its list ID.
+  // IMPORTANT:
+  // Newly inserted ListItems can temporarily inherit the listId of a
+  // neighboring outline/heading list. Calling setGlyphType() before
+  // detaching them can alter the glyph scheme of that neighboring list.
+  //
+  // Therefore the order is always:
+  //   1) choose a safe target listId
+  //   2) assign listId
+  //   3) set glyph type
+  //   4) set indentation
   const previousItem = continuePrevious
     ? findPreviousCompatibleListItem_(paragraphs[0], type)
     : null;
 
-  let firstNewItem = null;
-  let lastItem = null;
+  let temporarySeed = null;
+  let targetListItem = previousItem;
 
-  paragraphs.forEach((p, index) => {
-    const item = recreateAsListItem_(p, type);
+  if (!targetListItem) {
+    temporarySeed = createIsolatedListSeed_(type);
+    targetListItem = temporarySeed.item;
+  }
 
-    item.setGlyphType(glyph);
-    applyListIndents_(item);
+  const created = [];
 
-    if (index === 0) {
-      if (previousItem) {
-        item.setListId(previousItem);
-      }
-      firstNewItem = item;
-    } else {
-      // All selected items must belong to the same list.
-      item.setListId(previousItem || firstNewItem);
+  try {
+    paragraphs.forEach(p => {
+      const item = recreateAsListItem_(p, type);
+
+      // Detach from any automatically inherited neighboring list BEFORE
+      // touching the glyph definition.
+      item.setListId(targetListItem);
+      item.setGlyphType(glyph);
+      applyListIndents_(item);
+
+      created.push(item);
+    });
+  } finally {
+    if (temporarySeed) {
+      removeIsolatedListSeed_(temporarySeed);
     }
-
-    lastItem = item;
-  });
+  }
 
   return {
     ok: true,
@@ -234,6 +248,36 @@ function applyNativeListPreset_(paragraphs, type, continuePrevious) {
     leftIndentInches: 0.06,
     hangingIndentInches: 0.25
   };
+}
+
+function createIsolatedListSeed_(type) {
+  const body = getActiveBody_();
+  const marker = '\uE120';
+  const spacerMarker = '\uE121';
+
+  // A normal paragraph immediately before the seed prevents the temporary
+  // ListItem from inheriting the listId of the document's last list.
+  const spacer = body.appendParagraph(spacerMarker);
+  spacer.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+
+  const item = body.appendListItem(marker);
+  item.setGlyphType(getGlyphForListType_(type));
+  applyListIndents_(item);
+
+  return {
+    item: item,
+    spacer: spacer
+  };
+}
+
+function removeIsolatedListSeed_(seed) {
+  try {
+    if (seed.item) seed.item.removeFromParent();
+  } catch (e) {}
+
+  try {
+    if (seed.spacer) seed.spacer.removeFromParent();
+  } catch (e) {}
 }
 
 function applyLetterIncisoPreset_(paragraphs, continuePrevious) {
@@ -318,14 +362,31 @@ function findPreviousCompatibleListItem_(target, type) {
   const targetIndex = parent.getChildIndex(target);
   const glyph = getGlyphForListType_(type);
 
+  const EXPECTED_START = (0.06 + 0.25) * 72;
+  const EXPECTED_FIRST = 0.06 * 72;
+  const TOLERANCE = 1.5; // points
+
   for (let i = targetIndex - 1; i >= 0; i--) {
     const child = parent.getChild(i);
-
     if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
 
     const item = child.asListItem();
+
     try {
-      if (item.getGlyphType() === glyph) {
+      if (item.getGlyphType() !== glyph) continue;
+
+      // Only continue a list that looks like one created/formatted by this
+      // Add-on. This prevents a numbered Heading/outline list above the
+      // selection from being mistaken for the list to continue.
+      const startIndent = Number(item.getIndentStart());
+      const firstIndent = Number(item.getIndentFirstLine());
+
+      const startMatches =
+        Math.abs(startIndent - EXPECTED_START) <= TOLERANCE;
+      const firstMatches =
+        Math.abs(firstIndent - EXPECTED_FIRST) <= TOLERANCE;
+
+      if (startMatches && firstMatches) {
         return item;
       }
     } catch (e) {}
@@ -449,10 +510,16 @@ function applyListFormatToParagraph_(p, type) {
     return paragraph;
   }
 
-  const item = recreateAsListItem_(p, type);
-  item.setGlyphType(getGlyphForListType_(type));
-  applyListIndents_(item);
-  return item;
+  const seed = createIsolatedListSeed_(type);
+  try {
+    const item = recreateAsListItem_(p, type);
+    item.setListId(seed.item);
+    item.setGlyphType(getGlyphForListType_(type));
+    applyListIndents_(item);
+    return item;
+  } finally {
+    removeIsolatedListSeed_(seed);
+  }
 }
 
 function insertBreak(kind) {
