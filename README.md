@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.6
+# Docs Assistant v0.7.7
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -250,10 +250,14 @@ It is not written into the document or source code.
 - The same fix is used by Full Smart Format.
 
 
-## v0.7.6
-- List buttons now work with only the cursor in the target line; selection is optional.
-- Existing compatible native Google Docs list items are preserved instead of converted to plain paragraphs.
-- This preserves automatic numbering below the formatted item (for example b) remains b) after formatting a)).
-- The Add-on does not change listId or glyph type for an existing native list item.
-- With Continue enabled, a plain paragraph can join the nearest compatible native list above by reusing its listId without changing its glyph definition.
-- If no safe compatible native list is available, the isolated explicit-prefix fallback is still used so nearby numbered headings cannot be corrupted.
+## v0.7.7
+- Built from the stable v0.7.5 list engine; v0.7.6 list/indent changes were rolled back.
+- List buttons now work with only the cursor in the current line.
+- If the target is already a compatible native Google Docs list item:
+  - it is NOT converted to a paragraph;
+  - listId is untouched;
+  - glyph type is untouched;
+  - existing native-list indentation is untouched;
+  - automatic sequence below it is preserved.
+- Plain paragraphs still use the stable v0.7.5 manual-list fallback and its existing Left 0.06 in / Hanging 0.25 in behavior.
+- Full Smart Format uses the same native-list preservation rule.

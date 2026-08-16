@@ -182,88 +182,76 @@ function setKeepWithNext(value) {
 }
 
 function applyListPreset(type, continuePrevious) {
-  // Cursor-only operation is allowed. If there is a selection, every
-  // paragraph touched by the selection is formatted.
+  // Selection is optional. With only the cursor, format the whole current line.
   const paragraphs = getStyleTargetParagraphs_();
   if (!paragraphs.length) {
     throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
   }
 
-  return applySafeListPreset_(paragraphs, type, Boolean(continuePrevious));
+  return applyManualListPreset_(paragraphs, type, Boolean(continuePrevious));
 }
 
 /**
- * SAFE HYBRID LIST ENGINE
- * -----------------------
- * 1. Existing compatible native Google Docs ListItems are PRESERVED.
- *    Their listId/glyph is never changed, so automatic numbering continues.
- * 2. Plain paragraphs can join the nearest compatible native list when
- *    "Continue previous numbering" is enabled.
- * 3. If no safe native list exists, the Add-on uses the explicit-prefix
- *    fallback from v0.7.5, which cannot corrupt neighboring heading lists.
+ * SAFE LIST ENGINE
+ * ----------------
+ * Lists are rendered as Normal-text paragraphs with an explicit prefix:
+ *   BULLET -> •
+ *   NUMBER -> 1.
+ *   LETTER -> a)
+ *   ROMAN  -> i.
+ *
+ * We deliberately do NOT call setGlyphType() or setListId().
+ * That prevents selected bullets from changing the glyph scheme of a
+ * neighboring multilevel list used by numbered headings.
  */
-function applySafeListPreset_(paragraphs, type, continuePrevious) {
+function applyManualListPreset_(paragraphs, type, continuePrevious) {
   const allowed = ['BULLET', 'NUMBER', 'LETTER', 'ROMAN'];
   if (allowed.indexOf(type) === -1) throw new Error('Unknown list type.');
 
-  let nativeAnchor = continuePrevious
-    ? findPreviousCompatibleNativeListItem_(paragraphs[0], type)
-    : null;
+  let ordinal = 1;
 
-  let manualOrdinal = 1;
-  if (continuePrevious && type !== 'BULLET' && !nativeAnchor) {
+  if (continuePrevious && type !== 'BULLET') {
     const previous = findPreviousListOrdinal_(paragraphs[0], type);
-    if (previous > 0) manualOrdinal = previous + 1;
+    if (previous > 0) ordinal = previous + 1;
   }
 
   paragraphs.forEach(p => {
-    // Most important case: the line is already an automatic Docs list.
-    // Do NOT convert it to a paragraph; doing so makes the items below restart.
-    if (isCompatibleNativeListItem_(p, type)) {
-      applyNamedStyleToParagraph_(p, 'NORMAL');
-      applyListIndents_(p);
-      normalizeNativeListTextStyle_(p);
-
-      // Once we encounter a compatible native item it becomes a safe anchor
-      // for following plain paragraphs when Continue is enabled.
-      if (continuePrevious) nativeAnchor = p.asListItem();
+    // Surgical preservation rule:
+    // if the line is already a native Google Docs list of the requested type,
+    // do NOT recreate it, do NOT touch listId, and do NOT touch glyph type.
+    // That keeps automatic a)->b), 1.->2., etc. intact and cannot alter
+    // neighboring heading-numbering definitions.
+    if (isExistingNativeListOfType_(p, type)) {
+      normalizeExistingNativeListParagraph_(p);
       return;
     }
 
-    // A plain paragraph can safely join an existing compatible native list.
-    // We set its listId immediately and DO NOT call setGlyphType().
-    if (continuePrevious && nativeAnchor && p.getType() !== DocumentApp.ElementType.LIST_ITEM) {
-      const item = convertParagraphToExistingNativeList_(p, nativeAnchor);
-      applyNamedStyleToParagraph_(item, 'NORMAL');
-      applyListIndents_(item);
-      normalizeNativeListTextStyle_(item);
-      nativeAnchor = item;
-      return;
-    }
-
-    // Different/incompatible native list item: convert only this selected
-    // element to a paragraph, then use the isolated visible-prefix fallback.
     const original = p.getText();
     const paragraph = recreateAsParagraph_(p);
 
+    // Stable v0.7.5 behavior for plain paragraphs / incompatible lists.
     applyNamedStyleToParagraph_(paragraph, 'NORMAL');
+
     const content = stripAnyListPrefixText_(original).trim();
 
     switch (type) {
       case 'BULLET':
         paragraph.setText('• ' + content);
         break;
+
       case 'NUMBER':
-        paragraph.setText(String(manualOrdinal) + '. ' + content);
-        manualOrdinal++;
+        paragraph.setText(String(ordinal) + '. ' + content);
+        ordinal++;
         break;
+
       case 'LETTER':
-        paragraph.setText(numberToLetters_(manualOrdinal) + ') ' + content);
-        manualOrdinal++;
+        paragraph.setText(numberToLetters_(ordinal) + ') ' + content);
+        ordinal++;
         break;
+
       case 'ROMAN':
-        paragraph.setText(numberToRoman_(manualOrdinal).toLowerCase() + '. ' + content);
-        manualOrdinal++;
+        paragraph.setText(numberToRoman_(ordinal).toLowerCase() + '. ' + content);
+        ordinal++;
         break;
     }
 
@@ -276,73 +264,53 @@ function applySafeListPreset_(paragraphs, type, continuePrevious) {
     requestedContinue: continuePrevious,
     leftIndentInches: 0.06,
     hangingIndentInches: 0.25,
-    preservesExistingNativeLists: true
+    safeManualList: true
   };
 }
 
-function isCompatibleNativeListItem_(p, type) {
+function isExistingNativeListOfType_(p, type) {
   if (!p || p.getType() !== DocumentApp.ElementType.LIST_ITEM) return false;
 
   try {
     const glyph = p.asListItem().getGlyphType();
 
-    if (type === 'LETTER') return glyph === DocumentApp.GlyphType.LATIN_LOWER;
-    if (type === 'NUMBER') return glyph === DocumentApp.GlyphType.NUMBER;
-    if (type === 'ROMAN')  return glyph === DocumentApp.GlyphType.ROMAN_LOWER;
     if (type === 'BULLET') return glyph === DocumentApp.GlyphType.BULLET;
+    if (type === 'NUMBER') return glyph === DocumentApp.GlyphType.NUMBER;
+    if (type === 'LETTER') return glyph === DocumentApp.GlyphType.LATIN_LOWER;
+    if (type === 'ROMAN')  return glyph === DocumentApp.GlyphType.ROMAN_LOWER;
   } catch (e) {}
 
   return false;
 }
 
-function findPreviousCompatibleNativeListItem_(target, type) {
-  const parent = target.getParent();
-  if (!parent) return null;
+function normalizeExistingNativeListParagraph_(item) {
+  // Keep the native list structure, automatic numbering, listId, glyph
+  // definition and current list indentation completely untouched.
+  //
+  // Only mark the paragraph as Normal text. Do NOT use the broader
+  // applyNamedStyleToParagraph_() here because that copies paragraph-level
+  // attributes and could disturb native list geometry.
+  try {
+    item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
+  } catch (e) {}
 
-  const targetIndex = parent.getChildIndex(target);
-
-  for (let i = targetIndex - 1; i >= 0; i--) {
-    const child = parent.getChild(i);
-    if (!isCompatibleNativeListItem_(child, type)) continue;
-
-    // Avoid accidentally joining a numbered heading/outline. A compatible
-    // previous list must also use the Add-on's list indentation.
-    if (!matchesAddonListIndent_(child.asListItem())) continue;
-
-    return child.asListItem();
-  }
-
-  return null;
-}
-
-function convertParagraphToExistingNativeList_(p, nativeAnchor) {
-  const parent = p.getParent();
-  const idx = parent.getChildIndex(p);
-  const content = stripAnyListPrefixText_(p.getText()).trim();
-
-  const item = parent.insertListItem(idx, content);
-
-  // Critical order: join the intended existing list BEFORE making any other
-  // list-related change. We never call setGlyphType(), so the existing list
-  // definition (including a) vs a.) is preserved.
-  item.setListId(nativeAnchor);
-
-  p.removeFromParent();
-  return item;
-}
-
-function normalizeNativeListTextStyle_(item) {
-  // Formatting a list item must not inherit bold/direct formatting from
-  // the preceding heading or paragraph.
-  applyNamedStyleToParagraph_(item, 'NORMAL');
+  // Prevent accidental whole-line bold inherited from a preceding heading,
+  // but preserve mixed inline formatting whenever the item already has it.
+  const text = item.editAsText();
+  const value = text.getText();
+  if (!value) return;
 
   const body = getActiveBody_();
   const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
   const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
 
+  // Only clear bold when the entire item is uniformly bold. If it has mixed
+  // rich text (e.g. "Preventive Action:" bold + body regular), leave it alone.
   if (normalBold !== true) {
-    const t = item.editAsText();
-    if (t.getText().length) t.setBold(false);
+    const boldState = text.isBold();
+    if (boldState === true) {
+      text.setBold(false);
+    }
   }
 }
 
@@ -584,6 +552,11 @@ function stripAnyListPrefixText_(value) {
  * Preserves an existing visible ordinal when one is already present.
  */
 function applyListFormatToParagraph_(p, type) {
+  if (isExistingNativeListOfType_(p, type)) {
+    normalizeExistingNativeListParagraph_(p);
+    return p;
+  }
+
   const original = p.getText();
   const paragraph = recreateAsParagraph_(p);
 
