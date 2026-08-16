@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.5
+# Docs Assistant v0.7.6
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -248,3 +248,12 @@ It is not written into the document or source code.
 - Manual list formatting now reapplies the document's current Normal text style after replacing the paragraph text.
 - If Normal text is not itself bold, any inherited whole-paragraph bold is explicitly cleared.
 - The same fix is used by Full Smart Format.
+
+
+## v0.7.6
+- List buttons now work with only the cursor in the target line; selection is optional.
+- Existing compatible native Google Docs list items are preserved instead of converted to plain paragraphs.
+- This preserves automatic numbering below the formatted item (for example b) remains b) after formatting a)).
+- The Add-on does not change listId or glyph type for an existing native list item.
+- With Continue enabled, a plain paragraph can join the nearest compatible native list above by reusing its listId without changing its glyph definition.
+- If no safe compatible native list is available, the isolated explicit-prefix fallback is still used so nearby numbered headings cannot be corrupted.
