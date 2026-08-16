@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.4
+# Docs Assistant v0.7.5
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -241,3 +241,10 @@ It is not written into the document or source code.
 - Continue numbering scans upward for the previous matching visible prefix.
 - Older native lists created by previous versions are supported read-only for continuation when they match the Add-on indentation.
 - Selected native ListItems are converted only into plain paragraphs; neighboring list definitions are never modified.
+
+
+## v0.7.5
+- Fixed the first manually formatted list paragraph inheriting bold from the line above.
+- Manual list formatting now reapplies the document's current Normal text style after replacing the paragraph text.
+- If Normal text is not itself bold, any inherited whole-paragraph bold is explicitly cleared.
+- The same fix is used by Full Smart Format.

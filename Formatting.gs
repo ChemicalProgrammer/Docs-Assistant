@@ -245,6 +245,7 @@ function applyManualListPreset_(paragraphs, type, continuePrevious) {
         break;
     }
 
+    normalizeManualListParagraph_(paragraph);
     applyListIndents_(paragraph);
   });
 
@@ -269,6 +270,26 @@ function recreateAsParagraph_(p) {
   const paragraph = parent.insertParagraph(idx, p.getText());
   p.removeFromParent();
   return paragraph;
+}
+
+function normalizeManualListParagraph_(paragraph) {
+  // Reapply the CURRENT Normal text style after setText().
+  // Google Docs can inherit direct character formatting (notably bold)
+  // from a neighboring paragraph when a paragraph/list item is recreated.
+  applyNamedStyleToParagraph_(paragraph, 'NORMAL');
+
+  // Some documents retain direct BOLD on newly created text even after the
+  // named style is reassigned. A manual list is expected to begin as Normal
+  // text, so explicitly clear whole-paragraph bold only when Normal text is
+  // not defined as bold.
+  const body = getActiveBody_();
+  const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
+  const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
+
+  if (normalBold !== true) {
+    const t = paragraph.editAsText();
+    if (t.getText().length) t.setBold(false);
+  }
 }
 
 function applyListIndents_(item) {
@@ -495,6 +516,7 @@ function applyListFormatToParagraph_(p, type) {
     paragraph.setText(numberToRoman_(n).toLowerCase() + '. ' + content);
   }
 
+  normalizeManualListParagraph_(paragraph);
   applyListIndents_(paragraph);
   return paragraph;
 }
