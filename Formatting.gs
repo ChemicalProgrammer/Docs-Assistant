@@ -188,149 +188,73 @@ function applyListPreset(type, continuePrevious) {
   const paragraphs = getSelectedParagraphs_();
   if (!paragraphs.length) throw new Error('Select paragraphs first.');
 
-  if (type === 'LETTER') {
-    return applyLetterIncisoPreset_(paragraphs, Boolean(continuePrevious));
-  }
-
-  return applyNativeListPreset_(paragraphs, type, Boolean(continuePrevious));
+  return applyManualListPreset_(paragraphs, type, Boolean(continuePrevious));
 }
 
-function applyNativeListPreset_(paragraphs, type, continuePrevious) {
-  const glyph = getGlyphForListType_(type);
-  if (!glyph) throw new Error('Unknown list type.');
+/**
+ * SAFE LIST ENGINE
+ * ----------------
+ * Lists are rendered as Normal-text paragraphs with an explicit prefix:
+ *   BULLET -> •
+ *   NUMBER -> 1.
+ *   LETTER -> a)
+ *   ROMAN  -> i.
+ *
+ * We deliberately do NOT call setGlyphType() or setListId().
+ * That prevents selected bullets from changing the glyph scheme of a
+ * neighboring multilevel list used by numbered headings.
+ */
+function applyManualListPreset_(paragraphs, type, continuePrevious) {
+  const allowed = ['BULLET', 'NUMBER', 'LETTER', 'ROMAN'];
+  if (allowed.indexOf(type) === -1) throw new Error('Unknown list type.');
 
-  // IMPORTANT:
-  // Newly inserted ListItems can temporarily inherit the listId of a
-  // neighboring outline/heading list. Calling setGlyphType() before
-  // detaching them can alter the glyph scheme of that neighboring list.
-  //
-  // Therefore the order is always:
-  //   1) choose a safe target listId
-  //   2) assign listId
-  //   3) set glyph type
-  //   4) set indentation
-  const previousItem = continuePrevious
-    ? findPreviousCompatibleListItem_(paragraphs[0], type)
-    : null;
-
-  let temporarySeed = null;
-  let targetListItem = previousItem;
-
-  if (!targetListItem) {
-    temporarySeed = createIsolatedListSeed_(type);
-    targetListItem = temporarySeed.item;
-  }
-
-  const created = [];
-
-  try {
-    paragraphs.forEach(p => {
-      const item = recreateAsListItem_(p, type);
-
-      // Detach from any automatically inherited neighboring list BEFORE
-      // touching the glyph definition.
-      item.setListId(targetListItem);
-      item.setGlyphType(glyph);
-      applyListIndents_(item);
-
-      created.push(item);
-    });
-  } finally {
-    if (temporarySeed) {
-      removeIsolatedListSeed_(temporarySeed);
-    }
-  }
-
-  return {
-    ok: true,
-    continued: Boolean(previousItem),
-    requestedContinue: continuePrevious,
-    leftIndentInches: 0.06,
-    hangingIndentInches: 0.25
-  };
-}
-
-function createIsolatedListSeed_(type) {
-  const body = getActiveBody_();
-  const marker = '\uE120';
-  const spacerMarker = '\uE121';
-
-  // A normal paragraph immediately before the seed prevents the temporary
-  // ListItem from inheriting the listId of the document's last list.
-  const spacer = body.appendParagraph(spacerMarker);
-  spacer.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-
-  const item = body.appendListItem(marker);
-  item.setGlyphType(getGlyphForListType_(type));
-  applyListIndents_(item);
-
-  return {
-    item: item,
-    spacer: spacer
-  };
-}
-
-function removeIsolatedListSeed_(seed) {
-  try {
-    if (seed.item) seed.item.removeFromParent();
-  } catch (e) {}
-
-  try {
-    if (seed.spacer) seed.spacer.removeFromParent();
-  } catch (e) {}
-}
-
-function applyLetterIncisoPreset_(paragraphs, continuePrevious) {
   let ordinal = 1;
 
-  if (continuePrevious) {
-    const previous = findPreviousLetterOrdinal_(paragraphs[0]);
+  if (continuePrevious && type !== 'BULLET') {
+    const previous = findPreviousListOrdinal_(paragraphs[0], type);
     if (previous > 0) ordinal = previous + 1;
   }
 
   paragraphs.forEach(p => {
+    const original = p.getText();
     const paragraph = recreateAsParagraph_(p);
+
+    // Requirement: list text first receives the CURRENT Normal text style.
     applyNamedStyleToParagraph_(paragraph, 'NORMAL');
 
-    let content = paragraph.getText();
-    content = stripAnyListPrefixText_(content);
-    paragraph.setText(numberToLetters_(ordinal) + ') ' + content.trim());
+    const content = stripAnyListPrefixText_(original).trim();
+
+    switch (type) {
+      case 'BULLET':
+        paragraph.setText('• ' + content);
+        break;
+
+      case 'NUMBER':
+        paragraph.setText(String(ordinal) + '. ' + content);
+        ordinal++;
+        break;
+
+      case 'LETTER':
+        paragraph.setText(numberToLetters_(ordinal) + ') ' + content);
+        ordinal++;
+        break;
+
+      case 'ROMAN':
+        paragraph.setText(numberToRoman_(ordinal).toLowerCase() + '. ' + content);
+        ordinal++;
+        break;
+    }
 
     applyListIndents_(paragraph);
-    ordinal++;
   });
 
   return {
     ok: true,
-    continued: continuePrevious && ordinal > paragraphs.length + 1,
     requestedContinue: continuePrevious,
     leftIndentInches: 0.06,
     hangingIndentInches: 0.25,
-    suffix: ')'
+    safeManualList: true
   };
-}
-
-function getGlyphForListType_(type) {
-  const glyphs = {
-    BULLET: DocumentApp.GlyphType.BULLET,
-    NUMBER: DocumentApp.GlyphType.NUMBER,
-    ROMAN: DocumentApp.GlyphType.ROMAN_LOWER
-  };
-  return glyphs[type] || null;
-}
-
-function recreateAsListItem_(p, type) {
-  const parent = p.getParent();
-  const idx = parent.getChildIndex(p);
-
-  let content = p.getText();
-  content = stripAnyListPrefixText_(content);
-
-  const item = parent.insertListItem(idx, content);
-  p.removeFromParent();
-
-  applyNamedStyleToParagraph_(item, 'NORMAL');
-  return item;
 }
 
 function recreateAsParagraph_(p) {
@@ -338,6 +262,8 @@ function recreateAsParagraph_(p) {
     return p.asParagraph();
   }
 
+  // If the source is a native ListItem, convert only the selected item
+  // into a plain paragraph. No glyph/list definition is modified.
   const parent = p.getParent();
   const idx = parent.getChildIndex(p);
   const paragraph = parent.insertParagraph(idx, p.getText());
@@ -347,55 +273,16 @@ function recreateAsParagraph_(p) {
 
 function applyListIndents_(item) {
   const PT_PER_IN = 72;
-  const firstLinePt = 0.06 * PT_PER_IN;
-  const startPt = (0.06 + 0.25) * PT_PER_IN;
 
-  item.setIndentStart(startPt);
-  item.setIndentFirstLine(firstLinePt);
+  // Requested list geometry:
+  // Left = 0.06 in
+  // Hanging = 0.25 in
+  item.setIndentFirstLine(0.06 * PT_PER_IN);
+  item.setIndentStart((0.06 + 0.25) * PT_PER_IN);
   item.setIndentEnd(0);
 }
 
-function findPreviousCompatibleListItem_(target, type) {
-  const parent = target.getParent();
-  if (!parent) return null;
-
-  const targetIndex = parent.getChildIndex(target);
-  const glyph = getGlyphForListType_(type);
-
-  const EXPECTED_START = (0.06 + 0.25) * 72;
-  const EXPECTED_FIRST = 0.06 * 72;
-  const TOLERANCE = 1.5; // points
-
-  for (let i = targetIndex - 1; i >= 0; i--) {
-    const child = parent.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
-
-    const item = child.asListItem();
-
-    try {
-      if (item.getGlyphType() !== glyph) continue;
-
-      // Only continue a list that looks like one created/formatted by this
-      // Add-on. This prevents a numbered Heading/outline list above the
-      // selection from being mistaken for the list to continue.
-      const startIndent = Number(item.getIndentStart());
-      const firstIndent = Number(item.getIndentFirstLine());
-
-      const startMatches =
-        Math.abs(startIndent - EXPECTED_START) <= TOLERANCE;
-      const firstMatches =
-        Math.abs(firstIndent - EXPECTED_FIRST) <= TOLERANCE;
-
-      if (startMatches && firstMatches) {
-        return item;
-      }
-    } catch (e) {}
-  }
-
-  return null;
-}
-
-function findPreviousLetterOrdinal_(target) {
+function findPreviousListOrdinal_(target, type) {
   const parent = target.getParent();
   if (!parent) return 0;
 
@@ -404,23 +291,36 @@ function findPreviousLetterOrdinal_(target) {
   for (let i = targetIndex - 1; i >= 0; i--) {
     const child = parent.getChild(i);
 
-    // Manual inciso created by this Add-on: a), b), aa), etc.
     if (
-      child.getType() === DocumentApp.ElementType.PARAGRAPH ||
-      child.getType() === DocumentApp.ElementType.LIST_ITEM
+      child.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+      child.getType() !== DocumentApp.ElementType.LIST_ITEM
     ) {
-      const value = child.getText();
-      const m = value.match(/^\s*([A-Za-z]+)\)\s+/);
-      if (m) return lettersToNumber_(m[1]);
+      continue;
     }
 
-    // Compatibility with an older/native LATIN list:
+    const value = child.getText();
+
+    // First prefer lists already formatted by this Add-on.
+    const manual = getManualListOrdinal_(value, type);
+    if (manual > 0) return manual;
+
+    // Backward compatibility: older Add-on versions used native ListItems.
+    // Read them only; never modify their glyph/listId.
     if (child.getType() === DocumentApp.ElementType.LIST_ITEM) {
       const item = child.asListItem();
+
+      if (!matchesAddonListIndent_(item)) continue;
+
       try {
-        const glyphName = String(item.getGlyphType()).toUpperCase();
-        if (glyphName.indexOf('LATIN') >= 0) {
-          return getNativeListOrdinal_(item);
+        const glyph = item.getGlyphType();
+
+        if (
+          (type === 'NUMBER' && glyph === DocumentApp.GlyphType.NUMBER) ||
+          (type === 'LETTER' && glyph === DocumentApp.GlyphType.LATIN_LOWER) ||
+          (type === 'ROMAN' && glyph === DocumentApp.GlyphType.ROMAN_LOWER)
+        ) {
+          const nativeOrdinal = getNativeListOrdinalReadOnly_(item);
+          if (nativeOrdinal > 0) return nativeOrdinal;
         }
       } catch (e) {}
     }
@@ -429,7 +329,43 @@ function findPreviousLetterOrdinal_(target) {
   return 0;
 }
 
-function getNativeListOrdinal_(targetItem) {
+function getManualListOrdinal_(value, type) {
+  const text = String(value || '');
+
+  if (type === 'NUMBER') {
+    const m = text.match(/^\s*(\d+)\.\s+/);
+    return m ? Number(m[1]) : 0;
+  }
+
+  if (type === 'LETTER') {
+    const m = text.match(/^\s*([A-Za-z]+)\)\s+/);
+    return m ? lettersToNumber_(m[1]) : 0;
+  }
+
+  if (type === 'ROMAN') {
+    const m = text.match(/^\s*([ivxlcdm]+)\.\s+/i);
+    return m ? romanToNumber_(m[1]) : 0;
+  }
+
+  return 0;
+}
+
+function matchesAddonListIndent_(item) {
+  const EXPECTED_START = (0.06 + 0.25) * 72;
+  const EXPECTED_FIRST = 0.06 * 72;
+  const TOLERANCE = 1.5;
+
+  try {
+    return (
+      Math.abs(Number(item.getIndentStart()) - EXPECTED_START) <= TOLERANCE &&
+      Math.abs(Number(item.getIndentFirstLine()) - EXPECTED_FIRST) <= TOLERANCE
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+function getNativeListOrdinalReadOnly_(targetItem) {
   const body = getActiveBody_();
   let count = 0;
   let targetListId = '';
@@ -447,6 +383,7 @@ function getNativeListOrdinal_(targetItem) {
     if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
 
     const item = child.asListItem();
+
     try {
       if (item.getListId() === targetListId) count++;
       if (item === targetItem) return count;
@@ -482,6 +419,46 @@ function lettersToNumber_(letters) {
   return result;
 }
 
+function numberToRoman_(number) {
+  let n = Math.max(1, Number(number) || 1);
+  const map = [
+    [1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],
+    [100,'C'],[90,'XC'],[50,'L'],[40,'XL'],
+    [10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']
+  ];
+
+  let result = '';
+
+  map.forEach(pair => {
+    while (n >= pair[0]) {
+      result += pair[1];
+      n -= pair[0];
+    }
+  });
+
+  return result;
+}
+
+function romanToNumber_(roman) {
+  const value = String(roman || '').toUpperCase();
+  const values = {I:1,V:5,X:10,L:50,C:100,D:500,M:1000};
+  let total = 0;
+  let previous = 0;
+
+  for (let i = value.length - 1; i >= 0; i--) {
+    const current = values[value[i]] || 0;
+    if (!current) return 0;
+
+    if (current < previous) total -= current;
+    else {
+      total += current;
+      previous = current;
+    }
+  }
+
+  return total;
+}
+
 function stripAnyListPrefixText_(value) {
   let text = String(value || '');
 
@@ -494,32 +471,32 @@ function stripAnyListPrefixText_(value) {
 }
 
 /**
- * Backward-compatible helper used by Full Smart Format.
+ * Used by Full Smart Format.
+ * Preserves an existing visible ordinal when one is already present.
  */
 function applyListFormatToParagraph_(p, type) {
-  if (type === 'LETTER') {
-    const paragraph = recreateAsParagraph_(p);
-    applyNamedStyleToParagraph_(paragraph, 'NORMAL');
+  const original = p.getText();
+  const paragraph = recreateAsParagraph_(p);
 
-    const original = paragraph.getText();
-    const existing = original.match(/^\s*([A-Za-z]+)[.)]\s+/);
-    const ordinal = existing ? lettersToNumber_(existing[1]) : 1;
+  applyNamedStyleToParagraph_(paragraph, 'NORMAL');
 
-    paragraph.setText(numberToLetters_(ordinal) + ') ' + stripAnyListPrefixText_(original).trim());
-    applyListIndents_(paragraph);
-    return paragraph;
+  const content = stripAnyListPrefixText_(original).trim();
+
+  if (type === 'BULLET') {
+    paragraph.setText('• ' + content);
+  } else if (type === 'NUMBER') {
+    const n = getManualListOrdinal_(original, 'NUMBER') || 1;
+    paragraph.setText(String(n) + '. ' + content);
+  } else if (type === 'LETTER') {
+    const n = getManualListOrdinal_(original, 'LETTER') || 1;
+    paragraph.setText(numberToLetters_(n) + ') ' + content);
+  } else if (type === 'ROMAN') {
+    const n = getManualListOrdinal_(original, 'ROMAN') || 1;
+    paragraph.setText(numberToRoman_(n).toLowerCase() + '. ' + content);
   }
 
-  const seed = createIsolatedListSeed_(type);
-  try {
-    const item = recreateAsListItem_(p, type);
-    item.setListId(seed.item);
-    item.setGlyphType(getGlyphForListType_(type));
-    applyListIndents_(item);
-    return item;
-  } finally {
-    removeIsolatedListSeed_(seed);
-  }
+  applyListIndents_(paragraph);
+  return paragraph;
 }
 
 function insertBreak(kind) {

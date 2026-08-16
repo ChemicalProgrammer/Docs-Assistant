@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.3
+# Docs Assistant v0.7.4
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -227,3 +227,17 @@ It is not written into the document or source code.
   3. only then applies Bullet/Number/Roman glyph and indentation.
 - Continue numbering now also checks the expected Add-on indentation (Left 0.06 in / Hanging 0.25 in), preventing numbered headings from being mistaken for the preceding list.
 - Full Smart Format's native-list helper uses the same isolation safeguard.
+
+
+## v0.7.4
+- Replaced native-list mutation with a safe manual-list engine.
+- The Add-on no longer calls `setGlyphType()` or `setListId()` when applying Bullet, Number, Letter or Roman formatting.
+- This prevents list formatting from changing the shared multilevel-list definition used by nearby numbered headings.
+- Visual list prefixes are explicit:
+  - Bullet: `•`
+  - Number: `1.`, `2.`, `3.`
+  - Letter: `a)`, `b)`, `c)`
+  - Roman: `i.`, `ii.`, `iii.`
+- Continue numbering scans upward for the previous matching visible prefix.
+- Older native lists created by previous versions are supported read-only for continuation when they match the Add-on indentation.
+- Selected native ListItems are converted only into plain paragraphs; neighboring list definitions are never modified.
