@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.8
+# Docs Assistant v0.7.9
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -270,3 +270,13 @@ It is not written into the document or source code.
   - Right: 0 in
 - The ListItem itself is preserved: listId and glyph type are not changed.
 - Cursor-only formatting remains supported.
+
+
+## v0.7.9
+- Fixed Table/Figure caption counters using document child indexes instead of JavaScript object identity.
+- Root cause: comparing Apps Script document element wrappers with `===` is not reliable; the target caption was not always detected in document order.
+- Table captions now derive their number from the nearest ACTUAL Google Docs table element and that table's ordinal in the document.
+- Table caption may be above or below the table.
+- If no actual table exists, Table numbering falls back to prior Table captions.
+- Figure numbering continues to count prior Figure captions.
+- Full Smart Format caption numbering uses the same corrected counter.

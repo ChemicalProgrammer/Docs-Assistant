@@ -990,20 +990,99 @@ function formatCaptionParagraph_(p, type, description, number) {
 }
 
 function getCaptionOrdinal_(targetParagraph, type) {
-  const body = getActiveBody_();
+  if (type === 'Table') {
+    return getTableCaptionOrdinal_(targetParagraph);
+  }
+
+  return getCaptionOrdinalByPreviousCaptions_(targetParagraph, type);
+}
+
+/**
+ * Table numbering is based on ACTUAL Google Docs table elements, not on
+ * the number already written in caption text.
+ *
+ * The caption may be immediately above or below its table. We find the
+ * nearest actual TABLE element and return that table's 1-based position
+ * in the current document container.
+ *
+ * If no actual table can be found, we safely fall back to counting prior
+ * Table caption paragraphs.
+ */
+function getTableCaptionOrdinal_(targetParagraph) {
+  const parent = targetParagraph.getParent();
+  if (!parent || !parent.getChildIndex) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Table');
+  }
+
+  let targetIndex;
+  try {
+    targetIndex = parent.getChildIndex(targetParagraph);
+  } catch (e) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Table');
+  }
+
+  let nearestTableIndex = -1;
+  let nearestDistance = Number.MAX_SAFE_INTEGER;
+
+  for (let i = 0; i < parent.getNumChildren(); i++) {
+    const child = parent.getChild(i);
+    if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
+
+    const distance = Math.abs(i - targetIndex);
+
+    // Prefer the nearest actual table. If equally distant, prefer the table
+    // after the caption, which matches the common "caption above table" layout.
+    if (
+      distance < nearestDistance ||
+      (distance === nearestDistance && i > targetIndex)
+    ) {
+      nearestDistance = distance;
+      nearestTableIndex = i;
+    }
+  }
+
+  if (nearestTableIndex < 0) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Table');
+  }
+
+  let ordinal = 0;
+
+  for (let i = 0; i <= nearestTableIndex; i++) {
+    if (parent.getChild(i).getType() === DocumentApp.ElementType.TABLE) {
+      ordinal++;
+    }
+  }
+
+  return Math.max(1, ordinal);
+}
+
+/**
+ * Caption fallback / Figure numbering.
+ *
+ * IMPORTANT: compare by child index, not JavaScript object identity.
+ * Apps Script can return different wrapper objects for the same document
+ * element, so `child === targetParagraph` is not a reliable position test.
+ */
+function getCaptionOrdinalByPreviousCaptions_(targetParagraph, type) {
+  const parent = targetParagraph.getParent();
+  if (!parent || !parent.getChildIndex) return 1;
+
+  let targetIndex;
+  try {
+    targetIndex = parent.getChildIndex(targetParagraph);
+  } catch (e) {
+    return 1;
+  }
+
   let count = 0;
 
-  for (let i = 0; i < body.getNumChildren(); i++) {
-    const child = body.getChild(i);
+  for (let i = 0; i < targetIndex; i++) {
+    const child = parent.getChild(i);
 
-    if (child === targetParagraph) {
-      return count + 1;
-    }
+    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
 
-    if (child.getType() === DocumentApp.ElementType.PARAGRAPH) {
-      const parsed = parseCaptionLine_(child.asParagraph().getText());
-      if (parsed && parsed.type === type) count++;
-    }
+    const parsed = parseCaptionLine_(child.asParagraph().getText());
+    if (parsed && parsed.type === type) count++;
   }
 
   return count + 1;
@@ -1312,34 +1391,21 @@ function isInsideTable_(el) {
 
 function buildCaptionNumberPlan_(items, targetById) {
   const result = {};
-  const wanted = new Map();
 
   items.forEach(item => {
-    if (item.fixedType === 'figure_caption' || item.fixedType === 'table_caption') {
-      const p = targetById[item.id];
-      if (p) wanted.set(p, item.id);
+    if (
+      item.fixedType !== 'figure_caption' &&
+      item.fixedType !== 'table_caption'
+    ) {
+      return;
     }
+
+    const p = targetById[item.id];
+    if (!p) return;
+
+    const type = item.fixedType === 'figure_caption' ? 'Figure' : 'Table';
+    result[item.id] = getCaptionOrdinal_(p, type);
   });
-
-  if (!wanted.size) return result;
-
-  const body = getActiveBody_();
-  let figureCount = 0;
-  let tableCount = 0;
-
-  for (let i = 0; i < body.getNumChildren(); i++) {
-    const child = body.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
-
-    const parsed = parseCaptionLine_(child.asParagraph().getText());
-    if (!parsed) continue;
-
-    const next = parsed.type === 'Figure' ? ++figureCount : ++tableCount;
-
-    if (wanted.has(child)) {
-      result[wanted.get(child)] = next;
-    }
-  }
 
   return result;
 }
