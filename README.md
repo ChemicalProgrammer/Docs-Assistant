@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.3
+# Docs Assistant v0.8.4
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -329,3 +329,11 @@ It is not written into the document or source code.
   - Figure: prefers the figure before the caption.
 - This is more robust for captions separated from objects by blank paragraphs, page breaks, spacing, or other body elements.
 - Workflow: place cursor on the first real caption line -> Start at N -> Set here.
+
+
+## v0.8.4
+- Fixed false "The cursor must be in the main document body" errors when setting caption anchors.
+- Root cause: the code compared Apps Script element wrapper objects with JavaScript identity (`===`) while walking from the cursor paragraph to the Body. The same document element can be represented by separate wrappers.
+- Body membership is now detected by `DocumentApp.ElementType.BODY_SECTION` and validated with `Body.getChildIndex()`.
+- Caption NamedRanges are now created/read/removed through the active `DocumentTab` when available (`tab.newRange()`, `tab.addNamedRange()`, `tab.getNamedRanges()`), with legacy Document fallback.
+- The user workflow remains: cursor on first caption -> Start at -> Set here.

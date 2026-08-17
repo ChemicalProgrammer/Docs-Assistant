@@ -116,13 +116,21 @@ function getStyleTargetParagraphs_() {
   return el ? [el] : [];
 }
 
-function getActiveBody_() {
+function getActiveDocumentTab_() {
   const doc = DocumentApp.getActiveDocument();
   try {
-    return doc.getActiveTab().asDocumentTab().getBody();
+    return doc.getActiveTab().asDocumentTab();
   } catch (e) {
-    return doc.getBody();
+    return null;
   }
+}
+
+function getActiveBody_() {
+  const doc = DocumentApp.getActiveDocument();
+  const tab = getActiveDocumentTab_();
+
+  if (tab) return tab.getBody();
+  return doc.getBody();
 }
 
 function applyNamedTextAttributes_(paragraph, attrs) {
@@ -1175,8 +1183,7 @@ function setCaptionCounterAnchor(type, startAt) {
   const config = CAPTION_COUNTER_CONFIG_[normalized];
   removeNamedRangesByName_(config.anchorName);
 
-  const range = doc.newRange().addElement(top).build();
-  doc.addNamedRange(config.anchorName, range);
+  addActiveTabNamedRange_(config.anchorName, top);
 
   const props = PropertiesService.getDocumentProperties();
   if (props) props.setProperty(config.startProperty, String(start));
@@ -1204,9 +1211,32 @@ function clearCaptionCounterAnchor(type) {
   };
 }
 
-function removeNamedRangesByName_(name) {
+function getActiveTabNamedRanges_(name) {
   const doc = DocumentApp.getActiveDocument();
-  const named = doc.getNamedRanges(name) || [];
+  const tab = getActiveDocumentTab_();
+
+  try {
+    return tab ? (tab.getNamedRanges(name) || []) : (doc.getNamedRanges(name) || []);
+  } catch (e) {
+    return [];
+  }
+}
+
+function addActiveTabNamedRange_(name, element) {
+  const doc = DocumentApp.getActiveDocument();
+  const tab = getActiveDocumentTab_();
+
+  if (tab) {
+    const range = tab.newRange().addElement(element).build();
+    return tab.addNamedRange(name, range);
+  }
+
+  const range = doc.newRange().addElement(element).build();
+  return doc.addNamedRange(name, range);
+}
+
+function removeNamedRangesByName_(name) {
+  const named = getActiveTabNamedRanges_(name);
 
   named.forEach(n => {
     try { n.remove(); } catch (e) {}
@@ -1216,8 +1246,7 @@ function removeNamedRangesByName_(name) {
 function getCaptionCounterAnchorIndex_(type, parent) {
   const normalized = normalizeCaptionCounterType_(type);
   const config = CAPTION_COUNTER_CONFIG_[normalized];
-  const doc = DocumentApp.getActiveDocument();
-  const named = doc.getNamedRanges(config.anchorName) || [];
+  const named = getActiveTabNamedRanges_(config.anchorName);
 
   if (!named.length) return -1;
 
@@ -1291,9 +1320,34 @@ function getTopLevelElementForParent_(element, parent) {
 
   while (current) {
     let currentParent = null;
-    try { currentParent = current.getParent(); } catch (e) { return null; }
 
-    if (currentParent === parent) return current;
+    try {
+      currentParent = current.getParent();
+    } catch (e) {
+      return null;
+    }
+
+    if (!currentParent) return null;
+
+    // Robust body detection:
+    // do not compare Apps Script element wrapper objects with ===.
+    // Instead detect the actual Body container by its ElementType.
+    try {
+      if (currentParent.getType() === DocumentApp.ElementType.BODY_SECTION) {
+        // If a specific active body was supplied, confirm that this top-level
+        // element really belongs to it using getChildIndex(), not object identity.
+        if (parent && parent.getChildIndex) {
+          try {
+            parent.getChildIndex(current);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        return current;
+      }
+    } catch (e) {}
+
     current = currentParent;
   }
 
