@@ -1094,6 +1094,316 @@ function getCaptionOrdinal_(targetParagraph, type) {
   return getCaptionOrdinalByPreviousCaptions_(targetParagraph, type);
 }
 
+const CAPTION_COUNTER_CONFIG_ = {
+  Table: {
+    anchorName: 'DOCS_ASSISTANT_TABLE_COUNTER_ANCHOR',
+    startProperty: 'DOCS_ASSISTANT_TABLE_COUNTER_START'
+  },
+  Figure: {
+    anchorName: 'DOCS_ASSISTANT_FIGURE_COUNTER_ANCHOR',
+    startProperty: 'DOCS_ASSISTANT_FIGURE_COUNTER_START'
+  }
+};
+
+function normalizeCaptionCounterType_(type) {
+  const value = String(type || '').toLowerCase();
+  if (value === 'table') return 'Table';
+  if (value === 'figure') return 'Figure';
+  throw new Error('Counter type must be Table or Figure.');
+}
+
+function getCaptionCounterStart_(type) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const config = CAPTION_COUNTER_CONFIG_[normalized];
+  const props = PropertiesService.getDocumentProperties();
+  const raw = props ? props.getProperty(config.startProperty) : null;
+  const value = parseInt(raw || '1', 10);
+  return Number.isFinite(value) && value >= 1 ? value : 1;
+}
+
+function getCaptionNumberingSettings() {
+  return {
+    table: getCaptionCounterSettings_('Table'),
+    figure: getCaptionCounterSettings_('Figure')
+  };
+}
+
+function getCaptionCounterSettings_(type) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const body = getActiveBody_();
+  const anchorIndex = getCaptionCounterAnchorIndex_(normalized, body);
+
+  return {
+    startAt: getCaptionCounterStart_(normalized),
+    anchorSet: anchorIndex >= 0,
+    anchorIndex: anchorIndex
+  };
+}
+
+function setCaptionCounterAnchor(type, startAt) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const start = parseInt(startAt, 10);
+
+  if (!Number.isFinite(start) || start < 1) {
+    throw new Error('Start at must be an integer of 1 or greater.');
+  }
+
+  const doc = DocumentApp.getActiveDocument();
+  const body = getActiveBody_();
+  const reference = getCurrentReferenceElement_();
+
+  if (!reference) {
+    throw new Error('Place the cursor near the first ' + normalized.toLowerCase() + ' you want to count.');
+  }
+
+  const anchor = findCounterObjectNearReference_(normalized, reference, body);
+  if (!anchor) {
+    throw new Error(
+      normalized === 'Table'
+        ? 'No actual table was found near the cursor.'
+        : 'No actual figure/image was found near the cursor.'
+    );
+  }
+
+  const config = CAPTION_COUNTER_CONFIG_[normalized];
+
+  removeNamedRangesByName_(config.anchorName);
+
+  const range = doc.newRange().addElement(anchor).build();
+  doc.addNamedRange(config.anchorName, range);
+
+  const props = PropertiesService.getDocumentProperties();
+  if (props) props.setProperty(config.startProperty, String(start));
+
+  return {
+    type: normalized,
+    startAt: start,
+    anchorSet: true
+  };
+}
+
+function clearCaptionCounterAnchor(type) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const config = CAPTION_COUNTER_CONFIG_[normalized];
+
+  removeNamedRangesByName_(config.anchorName);
+
+  const props = PropertiesService.getDocumentProperties();
+  if (props) props.deleteProperty(config.startProperty);
+
+  return {
+    type: normalized,
+    startAt: 1,
+    anchorSet: false
+  };
+}
+
+function removeNamedRangesByName_(name) {
+  const doc = DocumentApp.getActiveDocument();
+  const named = doc.getNamedRanges(name) || [];
+
+  named.forEach(n => {
+    try { n.remove(); } catch (e) {}
+  });
+}
+
+function getCaptionCounterAnchorIndex_(type, parent) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const config = CAPTION_COUNTER_CONFIG_[normalized];
+  const doc = DocumentApp.getActiveDocument();
+  const named = doc.getNamedRanges(config.anchorName) || [];
+
+  if (!named.length) return -1;
+
+  for (let n = 0; n < named.length; n++) {
+    try {
+      const rangeElements = named[n].getRange().getRangeElements();
+
+      for (let i = 0; i < rangeElements.length; i++) {
+        const top = getTopLevelElementForParent_(rangeElements[i].getElement(), parent);
+        if (!top) continue;
+
+        const index = parent.getChildIndex(top);
+
+        if (
+          (normalized === 'Table' && top.getType() === DocumentApp.ElementType.TABLE) ||
+          (normalized === 'Figure' && isStandaloneFigureBlock_(top))
+        ) {
+          return index;
+        }
+      }
+    } catch (e) {}
+  }
+
+  return -1;
+}
+
+function getTopLevelElementForParent_(element, parent) {
+  let current = element;
+
+  while (current) {
+    let currentParent = null;
+    try { currentParent = current.getParent(); } catch (e) { return null; }
+
+    if (currentParent === parent) return current;
+    current = currentParent;
+  }
+
+  return null;
+}
+
+function getCurrentReferenceElement_() {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+
+  if (selection) {
+    const ranges = selection.getRangeElements();
+    if (ranges.length) return ranges[0].getElement();
+  }
+
+  const cursor = doc.getCursor();
+  if (cursor) return cursor.getElement();
+
+  return null;
+}
+
+function findCounterObjectNearReference_(type, reference, parent) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const top = getTopLevelElementForParent_(reference, parent);
+  if (!top) return null;
+
+  let referenceIndex;
+  try { referenceIndex = parent.getChildIndex(top); }
+  catch (e) { return null; }
+
+  if (normalized === 'Table' && top.getType() === DocumentApp.ElementType.TABLE) {
+    return top;
+  }
+
+  if (normalized === 'Figure' && isStandaloneFigureBlock_(top)) {
+    return top;
+  }
+
+  let best = null;
+  let bestDistance = Number.MAX_SAFE_INTEGER;
+  let bestIndex = -1;
+
+  for (let i = 0; i < parent.getNumChildren(); i++) {
+    const child = parent.getChild(i);
+    const matches =
+      normalized === 'Table'
+        ? child.getType() === DocumentApp.ElementType.TABLE
+        : isStandaloneFigureBlock_(child);
+
+    if (!matches) continue;
+
+    const distance = Math.abs(i - referenceIndex);
+
+    // Caption convention:
+    // Table captions are commonly above -> prefer table after on ties.
+    // Figure captions are commonly below -> prefer figure before on ties.
+    const preferredTie =
+      normalized === 'Table'
+        ? i > referenceIndex
+        : i < referenceIndex;
+
+    const currentTiePreferred =
+      bestIndex >= 0 &&
+      (normalized === 'Table' ? bestIndex > referenceIndex : bestIndex < referenceIndex);
+
+    if (
+      distance < bestDistance ||
+      (distance === bestDistance && preferredTie && !currentTiePreferred)
+    ) {
+      best = child;
+      bestDistance = distance;
+      bestIndex = i;
+    }
+  }
+
+  return best;
+}
+
+function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const anchorIndex = getCaptionCounterAnchorIndex_(normalized, parent);
+
+  // No custom anchor: count from the start of the document, as before.
+  if (anchorIndex < 0) {
+    let count = 0;
+
+    for (let i = 0; i <= objectIndex; i++) {
+      const child = parent.getChild(i);
+      const matches =
+        normalized === 'Table'
+          ? child.getType() === DocumentApp.ElementType.TABLE
+          : isStandaloneFigureBlock_(child);
+
+      if (matches) count++;
+    }
+
+    return Math.max(1, count);
+  }
+
+  // Objects before the anchor are outside the custom numbering sequence.
+  // Return null so bulk renumbering can leave them untouched.
+  if (objectIndex < anchorIndex) return null;
+
+  let relativeCount = 0;
+
+  for (let i = anchorIndex; i <= objectIndex; i++) {
+    const child = parent.getChild(i);
+    const matches =
+      normalized === 'Table'
+        ? child.getType() === DocumentApp.ElementType.TABLE
+        : isStandaloneFigureBlock_(child);
+
+    if (matches) relativeCount++;
+  }
+
+  if (relativeCount < 1) return null;
+
+  return getCaptionCounterStart_(normalized) + relativeCount - 1;
+}
+
+function renumberAllCaptions() {
+  const body = getActiveBody_();
+  let tables = 0;
+  let figures = 0;
+  let skippedBeforeAnchor = 0;
+
+  // Body-level captions only; captions inside table cells remain protected.
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const child = body.getChild(i);
+
+    if (child.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+
+    const p = child.asParagraph();
+    const parsed = parseCaptionLine_(p.getText());
+
+    if (!parsed || (parsed.type !== 'Table' && parsed.type !== 'Figure')) continue;
+
+    const ordinal = getCaptionOrdinal_(p, parsed.type);
+
+    if (ordinal === null || ordinal === undefined) {
+      skippedBeforeAnchor++;
+      continue;
+    }
+
+    formatCaptionParagraph_(p, parsed.type, parsed.description, ordinal);
+
+    if (parsed.type === 'Table') tables++;
+    else figures++;
+  }
+
+  return {
+    tables: tables,
+    figures: figures,
+    skippedBeforeAnchor: skippedBeforeAnchor
+  };
+}
+
+
 /**
  * Table numbering is based on ACTUAL Google Docs table elements, not on
  * the number already written in caption text.
@@ -1127,8 +1437,6 @@ function getTableCaptionOrdinal_(targetParagraph) {
 
     const distance = Math.abs(i - targetIndex);
 
-    // Prefer the nearest actual table. If equally distant, prefer the table
-    // after the caption, which matches the common "caption above table" layout.
     if (
       distance < nearestDistance ||
       (distance === nearestDistance && i > targetIndex)
@@ -1142,15 +1450,20 @@ function getTableCaptionOrdinal_(targetParagraph) {
     return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Table');
   }
 
-  let ordinal = 0;
+  const anchored = getAnchoredObjectOrdinal_('Table', parent, nearestTableIndex);
 
-  for (let i = 0; i <= nearestTableIndex; i++) {
-    if (parent.getChild(i).getType() === DocumentApp.ElementType.TABLE) {
-      ordinal++;
+  // A direct click on a caption before the custom anchor still receives the
+  // legacy document-start number. Bulk Renumber leaves pre-anchor captions
+  // untouched, but manual formatting remains predictable.
+  if (anchored === null) {
+    let count = 0;
+    for (let i = 0; i <= nearestTableIndex; i++) {
+      if (parent.getChild(i).getType() === DocumentApp.ElementType.TABLE) count++;
     }
+    return Math.max(1, count);
   }
 
-  return Math.max(1, ordinal);
+  return anchored;
 }
 
 /**
@@ -1189,8 +1502,6 @@ function getFigureCaptionOrdinal_(targetParagraph) {
 
     const distance = Math.abs(i - targetIndex);
 
-    // Figure captions are commonly placed BELOW the image.
-    // If two visual blocks are equally distant, prefer the one above.
     if (
       distance < nearestDistance ||
       (distance === nearestDistance && i < targetIndex)
@@ -1204,15 +1515,17 @@ function getFigureCaptionOrdinal_(targetParagraph) {
     return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Figure');
   }
 
-  let ordinal = 0;
+  const anchored = getAnchoredObjectOrdinal_('Figure', parent, nearestFigureIndex);
 
-  for (let i = 0; i <= nearestFigureIndex; i++) {
-    if (isStandaloneFigureBlock_(parent.getChild(i))) {
-      ordinal++;
+  if (anchored === null) {
+    let count = 0;
+    for (let i = 0; i <= nearestFigureIndex; i++) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) count++;
     }
+    return Math.max(1, count);
   }
 
-  return Math.max(1, ordinal);
+  return anchored;
 }
 
 function isStandaloneFigureBlock_(element) {

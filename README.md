@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.1
+# Docs Assistant v0.8.2
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -302,3 +302,20 @@ It is not written into the document or source code.
 - Required bullet indentation remains Left 0.06 in / Hanging 0.25 in / Right 0.
 - Continue previous numbering/list for bullets joins the nearest safe native bullet list above.
 - Full Smart Format also uses real native bullets.
+
+
+## v0.8.2
+- Added configurable caption numbering anchors for Tables and Figures.
+- New sidebar controls under CAPTIONS & NOTES:
+  - Start at [N]
+  - Set here
+  - Clear
+  - Renumber captions
+- `Set here` finds the nearest actual Table/Figure object to the cursor and stores a Named Range anchor in the document.
+- Start values are stored in Document Properties.
+- Tables/Figures before an anchor are excluded from the custom sequence.
+- `Clear` removes the anchor and returns that counter to document-start counting at 1.
+- `Renumber captions` updates all existing body-level Figure/Table captions; captions before a configured anchor are left unchanged.
+- Table counting uses actual TABLE elements.
+- Figure counting uses actual standalone image/drawing blocks.
+- This solves cover/layout tables being counted before the real report content.

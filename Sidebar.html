@@ -74,7 +74,38 @@
           <button class="btn-tablecaption" onclick="formatCaption('table',event)">Table</button>
           <button class="btn-note" onclick="formatNote(event)">Note</button>
         </div>
-        <div class="smartHint">Figure/Table add the next consecutive number. Note uses the same Arial 9 centered format, with <b>Note.</b> bold and no counter.</div>
+        <div class="smartHint">Figure/Table use actual document objects for the consecutive number. Note has no counter.</div>
+
+        <div class="counterPanel">
+          <div class="counterTitle">CAPTION NUMBERING</div>
+
+          <div class="counterItem">
+            <div class="counterTop">
+              <span>Tables</span>
+              <span id="tableCounterState" class="counterState">Document start · 1</span>
+            </div>
+            <div class="counterControls">
+              <input id="tableCounterStart" class="counterNumber" type="number" min="1" step="1" value="1" aria-label="Table start number">
+              <button class="counterSet btn-tablecaption" onclick="setCaptionAnchor('table',event)">Set here</button>
+              <button class="counterClear" onclick="clearCaptionAnchor('table',event)">Clear</button>
+            </div>
+          </div>
+
+          <div class="counterItem">
+            <div class="counterTop">
+              <span>Figures</span>
+              <span id="figureCounterState" class="counterState">Document start · 1</span>
+            </div>
+            <div class="counterControls">
+              <input id="figureCounterStart" class="counterNumber" type="number" min="1" step="1" value="1" aria-label="Figure start number">
+              <button class="counterSet btn-figure" onclick="setCaptionAnchor('figure',event)">Set here</button>
+              <button class="counterClear" onclick="clearCaptionAnchor('figure',event)">Clear</button>
+            </div>
+          </div>
+
+          <button class="wide btn-renumber" onclick="renumberCaptions(event)">↻ Renumber captions</button>
+          <div class="smartHint counterHint">Place the cursor near the first real table/figure to count, choose its starting number, then Set here. Clear returns to counting from the document start.</div>
+        </div>
       </div>
 
       <div class="group">

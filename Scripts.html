@@ -50,6 +50,26 @@ function refreshContext(){
   document.getElementById('selectionContext').textContent=msg;document.getElementById('geminiContext').textContent=msg;
   if(!taskRunning)document.getElementById('replaceBtn').disabled=!c.hasSelection;
  }).getDocumentContext();
+
+ refreshCaptionNumberingSettings();
+}
+
+function refreshCaptionNumberingSettings(){
+ google.script.run.withSuccessHandler(s=>{
+   if(!s)return;
+   const table=s.table||{};
+   const figure=s.figure||{};
+
+   const tInput=document.getElementById('tableCounterStart');
+   const fInput=document.getElementById('figureCounterStart');
+   if(tInput && document.activeElement!==tInput)tInput.value=table.startAt||1;
+   if(fInput && document.activeElement!==fInput)fInput.value=figure.startAt||1;
+
+   const tState=document.getElementById('tableCounterState');
+   const fState=document.getElementById('figureCounterState');
+   if(tState)tState.textContent=table.anchorSet?`Anchor set · ${table.startAt||1}`:`Document start · ${table.startAt||1}`;
+   if(fState)fState.textContent=figure.anchorSet?`Anchor set · ${figure.startAt||1}`:`Document start · ${figure.startAt||1}`;
+ }).getCaptionNumberingSettings();
 }
 function fullSmartFormat(e){
  if(!beginTask(e.currentTarget,'Analyzing…'))return;
@@ -77,6 +97,43 @@ function formatNote(e){
 }
 function formatCaption(type,e){
  runServer(e.currentTarget,'…','formatCaptionLine',[type],type === 'figure' ? 'Figure caption formatted' : 'Table caption formatted');
+}
+function setCaptionAnchor(type,e){
+ const input=document.getElementById(type==='table'?'tableCounterStart':'figureCounterStart');
+ const start=parseInt(input.value,10);
+ if(!Number.isFinite(start)||start<1){status('Start at must be 1 or greater.');return;}
+ if(!beginTask(e.currentTarget,'Setting…'))return;
+ google.script.run
+   .withSuccessHandler(()=>{
+     refreshCaptionNumberingSettings();
+     endTask(true,(type==='table'?'Table':'Figure')+' counter anchor set');
+   })
+   .withFailureHandler(fail)
+   .setCaptionCounterAnchor(type,start);
+}
+function clearCaptionAnchor(type,e){
+ if(!beginTask(e.currentTarget,'…'))return;
+ google.script.run
+   .withSuccessHandler(()=>{
+     refreshCaptionNumberingSettings();
+     endTask(true,(type==='table'?'Table':'Figure')+' counter reset to document start');
+   })
+   .withFailureHandler(fail)
+   .clearCaptionCounterAnchor(type);
+}
+function renumberCaptions(e){
+ if(!beginTask(e.currentTarget,'Renumbering…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     r=r||{};
+     const parts=[];
+     parts.push(`${r.tables||0} tables`);
+     parts.push(`${r.figures||0} figures`);
+     if(r.skippedBeforeAnchor)parts.push(`${r.skippedBeforeAnchor} before anchor unchanged`);
+     endTask(true,'Renumbered · '+parts.join(' · '));
+   })
+   .withFailureHandler(fail)
+   .renumberAllCaptions();
 }
 function formatTable(e){
  runServer(e.currentTarget,'Formatting…','formatSelectedTable',[],'Table formatted');
