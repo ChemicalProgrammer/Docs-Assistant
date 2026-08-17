@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.0
+# Docs Assistant v0.8.1
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -293,3 +293,12 @@ It is not written into the document or source code.
 - The Figure caption is associated with the nearest visual block; on equal distance, the visual block above the caption is preferred.
 - If no actual visual object is found, numbering falls back to prior Figure captions.
 - Table numbering remains based on actual TABLE elements.
+
+
+## v0.8.1
+- Bullet formatting now creates REAL Google Docs `ListItem` bullets instead of inserting the `•` text character.
+- Existing native bullet items are preserved; their listId/glyph are not changed.
+- Plain paragraphs are converted to native bullets with an isolation workflow that prevents inheriting or mutating nearby numbered-heading list definitions.
+- Required bullet indentation remains Left 0.06 in / Hanging 0.25 in / Right 0.
+- Continue previous numbering/list for bullets joins the nearest safe native bullet list above.
+- Full Smart Format also uses real native bullets.

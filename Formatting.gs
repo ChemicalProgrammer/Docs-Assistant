@@ -188,22 +188,114 @@ function applyListPreset(type, continuePrevious) {
     throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
   }
 
+  // Bullets must be REAL Google Docs bullets (native ListItems).
+  if (type === 'BULLET') {
+    return applyNativeBulletPreset_(paragraphs, Boolean(continuePrevious));
+  }
+
   return applyManualListPreset_(paragraphs, type, Boolean(continuePrevious));
 }
 
 /**
  * SAFE LIST ENGINE
  * ----------------
- * Lists are rendered as Normal-text paragraphs with an explicit prefix:
- *   BULLET -> •
- *   NUMBER -> 1.
- *   LETTER -> a)
- *   ROMAN  -> i.
- *
- * We deliberately do NOT call setGlyphType() or setListId().
- * That prevents selected bullets from changing the glyph scheme of a
- * neighboring multilevel list used by numbered headings.
+ * Number/Letter/Roman use the explicit-prefix fallback.
+ * BULLET uses the separate native-bullet engine above so bullets remain
+ * true Google Docs ListItems.
  */
+function applyNativeBulletPreset_(paragraphs, continuePrevious) {
+  let anchor = continuePrevious
+    ? findPreviousSafeNativeBullet_(paragraphs[0])
+    : null;
+
+  paragraphs.forEach(p => {
+    // Already a real bullet: preserve listId/glyph, just normalize style/indent.
+    if (isExistingNativeListOfType_(p, 'BULLET')) {
+      normalizeExistingNativeListParagraph_(p);
+      if (!anchor) anchor = p.asListItem();
+      return;
+    }
+
+    // Convert only the selected paragraph/item to a native bullet.
+    const item = convertToSafeNativeBullet_(p, anchor);
+    normalizeExistingNativeListParagraph_(item);
+
+    if (!anchor) anchor = item;
+  });
+
+  return {
+    ok: true,
+    requestedContinue: continuePrevious,
+    nativeBullets: true,
+    leftIndentInches: 0.06,
+    hangingIndentInches: 0.25
+  };
+}
+
+/**
+ * Convert one target into a native ListItem without ever changing the
+ * list definition of neighboring headings/lists.
+ *
+ * If an anchor bullet exists, the new item joins it by listId and we never
+ * call setGlyphType().
+ *
+ * If there is no anchor, the new ListItem is created between two temporary
+ * normal paragraphs so Google Docs cannot inherit a neighboring listId.
+ * Only while isolated do we set its glyph to BULLET.
+ */
+function convertToSafeNativeBullet_(p, anchor) {
+  const parent = p.getParent();
+  const idx = parent.getChildIndex(p);
+  const content = stripAnyListPrefixText_(p.getText()).trim();
+
+  if (anchor) {
+    const item = parent.insertListItem(idx, content);
+
+    // Critical: assign the known bullet list before removing the original.
+    // Do not call setGlyphType(); the anchor's list definition supplies it.
+    item.setListId(anchor);
+
+    p.removeFromParent();
+    return item;
+  }
+
+  // Create an isolated native bullet list.
+  const before = parent.insertParagraph(idx, '\uE210');
+  const after = parent.insertParagraph(idx + 1, '\uE211');
+  const item = parent.insertListItem(idx + 1, content);
+
+  // Item is surrounded by normal paragraphs, so this glyph change cannot
+  // mutate a neighboring numbered-heading list.
+  item.setGlyphType(DocumentApp.GlyphType.BULLET);
+
+  // Remove original target and temporary separators.
+  p.removeFromParent();
+  try { after.removeFromParent(); } catch (e) {}
+  try { before.removeFromParent(); } catch (e) {}
+
+  return item;
+}
+
+function findPreviousSafeNativeBullet_(target) {
+  const parent = target.getParent();
+  if (!parent) return null;
+
+  const targetIndex = parent.getChildIndex(target);
+
+  for (let i = targetIndex - 1; i >= 0; i--) {
+    const child = parent.getChild(i);
+
+    if (!isExistingNativeListOfType_(child, 'BULLET')) continue;
+
+    // Prefer a bullet already using this Add-on's expected geometry.
+    if (matchesAddonListIndent_(child.asListItem())) {
+      return child.asListItem();
+    }
+  }
+
+  return null;
+}
+
 function applyManualListPreset_(paragraphs, type, continuePrevious) {
   const allowed = ['BULLET', 'NUMBER', 'LETTER', 'ROMAN'];
   if (allowed.indexOf(type) === -1) throw new Error('Unknown list type.');
@@ -236,8 +328,7 @@ function applyManualListPreset_(paragraphs, type, continuePrevious) {
 
     switch (type) {
       case 'BULLET':
-        paragraph.setText('• ' + content);
-        break;
+        throw new Error('Bullet formatting must use the native bullet engine.');
 
       case 'NUMBER':
         paragraph.setText(String(ordinal) + '. ' + content);
@@ -581,7 +672,9 @@ function applyListFormatToParagraph_(p, type) {
   const content = stripAnyListPrefixText_(original).trim();
 
   if (type === 'BULLET') {
-    paragraph.setText('• ' + content);
+    // Full Smart Format must also create a REAL bullet, not a text character.
+    // The current paragraph is converted safely into an isolated native bullet.
+    return convertToSafeNativeBullet_(paragraph, null);
   } else if (type === 'NUMBER') {
     const n = getManualListOrdinal_(original, 'NUMBER') || 1;
     paragraph.setText(String(n) + '. ' + content);
