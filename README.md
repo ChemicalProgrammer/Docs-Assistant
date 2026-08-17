@@ -1,4 +1,4 @@
-# Docs Assistant v0.7.9
+# Docs Assistant v0.8.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -280,3 +280,16 @@ It is not written into the document or source code.
 - If no actual table exists, Table numbering falls back to prior Table captions.
 - Figure numbering continues to count prior Figure captions.
 - Full Smart Format caption numbering uses the same corrected counter.
+
+
+## v0.8.0
+- Figure captions now derive their consecutive number from actual visual objects, similar to Table captions.
+- A standalone Figure block is a body-level paragraph/list item containing:
+  - InlineImage
+  - InlineDrawing
+  - PositionedImage anchored to the paragraph
+- Multiple visual objects in one paragraph count as one composite Figure.
+- Graphics inside tables are not counted as standalone Figures.
+- The Figure caption is associated with the nearest visual block; on equal distance, the visual block above the caption is preferred.
+- If no actual visual object is found, numbering falls back to prior Figure captions.
+- Table numbering remains based on actual TABLE elements.

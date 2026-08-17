@@ -994,6 +994,10 @@ function getCaptionOrdinal_(targetParagraph, type) {
     return getTableCaptionOrdinal_(targetParagraph);
   }
 
+  if (type === 'Figure') {
+    return getFigureCaptionOrdinal_(targetParagraph);
+  }
+
   return getCaptionOrdinalByPreviousCaptions_(targetParagraph, type);
 }
 
@@ -1057,7 +1061,104 @@ function getTableCaptionOrdinal_(targetParagraph) {
 }
 
 /**
- * Caption fallback / Figure numbering.
+ * Figure numbering is based on actual visual objects in the document body.
+ *
+ * A "figure block" is a body-level Paragraph/ListItem containing one or more:
+ * - InlineImage
+ * - InlineDrawing
+ * - PositionedImage anchored to the paragraph
+ *
+ * Multiple visual objects in the same paragraph are treated as ONE figure
+ * block, which is useful for composite figures.
+ *
+ * Images/drawings inside tables are intentionally not counted here because
+ * table-cell graphics should not normally advance standalone Figure numbering.
+ */
+function getFigureCaptionOrdinal_(targetParagraph) {
+  const parent = targetParagraph.getParent();
+  if (!parent || !parent.getChildIndex) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Figure');
+  }
+
+  let targetIndex;
+  try {
+    targetIndex = parent.getChildIndex(targetParagraph);
+  } catch (e) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Figure');
+  }
+
+  let nearestFigureIndex = -1;
+  let nearestDistance = Number.MAX_SAFE_INTEGER;
+
+  for (let i = 0; i < parent.getNumChildren(); i++) {
+    const child = parent.getChild(i);
+    if (!isStandaloneFigureBlock_(child)) continue;
+
+    const distance = Math.abs(i - targetIndex);
+
+    // Figure captions are commonly placed BELOW the image.
+    // If two visual blocks are equally distant, prefer the one above.
+    if (
+      distance < nearestDistance ||
+      (distance === nearestDistance && i < targetIndex)
+    ) {
+      nearestDistance = distance;
+      nearestFigureIndex = i;
+    }
+  }
+
+  if (nearestFigureIndex < 0) {
+    return getCaptionOrdinalByPreviousCaptions_(targetParagraph, 'Figure');
+  }
+
+  let ordinal = 0;
+
+  for (let i = 0; i <= nearestFigureIndex; i++) {
+    if (isStandaloneFigureBlock_(parent.getChild(i))) {
+      ordinal++;
+    }
+  }
+
+  return Math.max(1, ordinal);
+}
+
+function isStandaloneFigureBlock_(element) {
+  if (!element || !element.getType) return false;
+
+  const type = element.getType();
+  if (
+    type !== DocumentApp.ElementType.PARAGRAPH &&
+    type !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    return false;
+  }
+
+  // Inline images / drawings.
+  try {
+    const count = element.getNumChildren();
+    for (let i = 0; i < count; i++) {
+      const childType = element.getChild(i).getType();
+
+      if (
+        childType === DocumentApp.ElementType.INLINE_IMAGE ||
+        childType === DocumentApp.ElementType.INLINE_DRAWING
+      ) {
+        return true;
+      }
+    }
+  } catch (e) {}
+
+  // Positioned images are not child Elements; they are anchored to a paragraph.
+  try {
+    const positioned = element.getPositionedImages();
+    if (positioned && positioned.length > 0) return true;
+  } catch (e) {}
+
+  return false;
+}
+
+/**
+ * Caption fallback when no actual Table/Figure object can be associated.
  *
  * IMPORTANT: compare by child index, not JavaScript object identity.
  * Apps Script can return different wrapper objects for the same document
