@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.2
+# Docs Assistant v0.8.3
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -319,3 +319,13 @@ It is not written into the document or source code.
 - Table counting uses actual TABLE elements.
 - Figure counting uses actual standalone image/drawing blocks.
 - This solves cover/layout tables being counted before the real report content.
+
+
+## v0.8.3
+- Fixed Caption Numbering anchor setup error ("no table near cursor").
+- `Set here` now anchors the CURRENT caption paragraph instead of trying to locate the physical Table/Figure during setup.
+- At numbering time, the Add-on resolves that caption anchor to the nearest actual Table/Figure:
+  - Table: prefers the table after the caption.
+  - Figure: prefers the figure before the caption.
+- This is more robust for captions separated from objects by blank paragraphs, page breaks, spacing, or other body elements.
+- Workflow: place cursor on the first real caption line -> Start at N -> Set here.

@@ -1153,23 +1153,29 @@ function setCaptionCounterAnchor(type, startAt) {
   const reference = getCurrentReferenceElement_();
 
   if (!reference) {
-    throw new Error('Place the cursor near the first ' + normalized.toLowerCase() + ' you want to count.');
+    throw new Error('Place the cursor on the first caption line you want to number.');
   }
 
-  const anchor = findCounterObjectNearReference_(normalized, reference, body);
-  if (!anchor) {
-    throw new Error(
-      normalized === 'Table'
-        ? 'No actual table was found near the cursor.'
-        : 'No actual figure/image was found near the cursor.'
-    );
+  // The anchor is the CURRENT BODY-LEVEL PARAGRAPH/LIST ITEM.
+  // We deliberately do not require the physical table/image to be found
+  // at setup time. That was too brittle for real Docs layouts.
+  const top = getTopLevelElementForParent_(reference, body);
+  if (!top) {
+    throw new Error('The cursor must be in the main document body.');
+  }
+
+  const topType = top.getType();
+  if (
+    topType !== DocumentApp.ElementType.PARAGRAPH &&
+    topType !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    throw new Error('Place the cursor on the caption text line, then press Set here.');
   }
 
   const config = CAPTION_COUNTER_CONFIG_[normalized];
-
   removeNamedRangesByName_(config.anchorName);
 
-  const range = doc.newRange().addElement(anchor).build();
+  const range = doc.newRange().addElement(top).build();
   doc.addNamedRange(config.anchorName, range);
 
   const props = PropertiesService.getDocumentProperties();
@@ -1223,19 +1229,61 @@ function getCaptionCounterAnchorIndex_(type, parent) {
         const top = getTopLevelElementForParent_(rangeElements[i].getElement(), parent);
         if (!top) continue;
 
-        const index = parent.getChildIndex(top);
-
-        if (
-          (normalized === 'Table' && top.getType() === DocumentApp.ElementType.TABLE) ||
-          (normalized === 'Figure' && isStandaloneFigureBlock_(top))
-        ) {
-          return index;
-        }
+        return parent.getChildIndex(top);
       }
     } catch (e) {}
   }
 
   return -1;
+}
+
+/**
+ * Resolve the stored caption-line anchor to the ACTUAL first Table/Figure
+ * object that belongs to that caption. This is done at count time, so setup
+ * does not fail just because the object is not "near enough" in the DOM.
+ */
+function getCaptionCounterAnchorObjectIndex_(type, parent) {
+  const normalized = normalizeCaptionCounterType_(type);
+  const anchorLineIndex = getCaptionCounterAnchorIndex_(normalized, parent);
+  if (anchorLineIndex < 0) return -1;
+
+  let bestIndex = -1;
+  let bestDistance = Number.MAX_SAFE_INTEGER;
+
+  for (let i = 0; i < parent.getNumChildren(); i++) {
+    const child = parent.getChild(i);
+    const matches =
+      normalized === 'Table'
+        ? child.getType() === DocumentApp.ElementType.TABLE
+        : isStandaloneFigureBlock_(child);
+
+    if (!matches) continue;
+
+    const distance = Math.abs(i - anchorLineIndex);
+
+    // Table captions are usually above the table -> prefer object after.
+    // Figure captions are usually below the figure -> prefer object before.
+    const preferredTie =
+      normalized === 'Table'
+        ? i > anchorLineIndex
+        : i < anchorLineIndex;
+
+    const currentBestPreferred =
+      bestIndex >= 0 &&
+      (normalized === 'Table'
+        ? bestIndex > anchorLineIndex
+        : bestIndex < anchorLineIndex);
+
+    if (
+      distance < bestDistance ||
+      (distance === bestDistance && preferredTie && !currentBestPreferred)
+    ) {
+      bestIndex = i;
+      bestDistance = distance;
+    }
+  }
+
+  return bestIndex;
 }
 
 function getTopLevelElementForParent_(element, parent) {
@@ -1267,69 +1315,13 @@ function getCurrentReferenceElement_() {
   return null;
 }
 
-function findCounterObjectNearReference_(type, reference, parent) {
-  const normalized = normalizeCaptionCounterType_(type);
-  const top = getTopLevelElementForParent_(reference, parent);
-  if (!top) return null;
-
-  let referenceIndex;
-  try { referenceIndex = parent.getChildIndex(top); }
-  catch (e) { return null; }
-
-  if (normalized === 'Table' && top.getType() === DocumentApp.ElementType.TABLE) {
-    return top;
-  }
-
-  if (normalized === 'Figure' && isStandaloneFigureBlock_(top)) {
-    return top;
-  }
-
-  let best = null;
-  let bestDistance = Number.MAX_SAFE_INTEGER;
-  let bestIndex = -1;
-
-  for (let i = 0; i < parent.getNumChildren(); i++) {
-    const child = parent.getChild(i);
-    const matches =
-      normalized === 'Table'
-        ? child.getType() === DocumentApp.ElementType.TABLE
-        : isStandaloneFigureBlock_(child);
-
-    if (!matches) continue;
-
-    const distance = Math.abs(i - referenceIndex);
-
-    // Caption convention:
-    // Table captions are commonly above -> prefer table after on ties.
-    // Figure captions are commonly below -> prefer figure before on ties.
-    const preferredTie =
-      normalized === 'Table'
-        ? i > referenceIndex
-        : i < referenceIndex;
-
-    const currentTiePreferred =
-      bestIndex >= 0 &&
-      (normalized === 'Table' ? bestIndex > referenceIndex : bestIndex < referenceIndex);
-
-    if (
-      distance < bestDistance ||
-      (distance === bestDistance && preferredTie && !currentTiePreferred)
-    ) {
-      best = child;
-      bestDistance = distance;
-      bestIndex = i;
-    }
-  }
-
-  return best;
-}
 
 function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
   const normalized = normalizeCaptionCounterType_(type);
-  const anchorIndex = getCaptionCounterAnchorIndex_(normalized, parent);
+  const anchorLineIndex = getCaptionCounterAnchorIndex_(normalized, parent);
 
-  // No custom anchor: count from the start of the document, as before.
-  if (anchorIndex < 0) {
+  // No custom anchor: legacy behavior, count from document start.
+  if (anchorLineIndex < 0) {
     let count = 0;
 
     for (let i = 0; i <= objectIndex; i++) {
@@ -1345,13 +1337,16 @@ function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
     return Math.max(1, count);
   }
 
-  // Objects before the anchor are outside the custom numbering sequence.
-  // Return null so bulk renumbering can leave them untouched.
-  if (objectIndex < anchorIndex) return null;
+  const anchorObjectIndex = getCaptionCounterAnchorObjectIndex_(normalized, parent);
+  if (anchorObjectIndex < 0) return null;
+
+  // Anything physically before the first anchored object is outside
+  // the custom numbering sequence.
+  if (objectIndex < anchorObjectIndex) return null;
 
   let relativeCount = 0;
 
-  for (let i = anchorIndex; i <= objectIndex; i++) {
+  for (let i = anchorObjectIndex; i <= objectIndex; i++) {
     const child = parent.getChild(i);
     const matches =
       normalized === 'Table'
