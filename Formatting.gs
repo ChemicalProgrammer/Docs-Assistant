@@ -7,27 +7,19 @@ function applyNamedStyle(styleName) {
   }
 
   const context = getNamedStyleContext_(styleName);
-  const lookupMs = Date.now() - started;
 
-  if (targets.length === 1) {
-    formatSingleParagraph_(targets[0], styleName, context);
-  } else {
-    formatParagraphRange_(targets, styleName, context);
-  }
+  targets.forEach(p => {
+    formatSingleParagraph_(p, styleName, context);
+  });
 
   return {
     ok: true,
     paragraphs: targets.length,
     mode: targets.length === 1 ? 'single' : 'range',
-    lookupMs: lookupMs,
     elapsedMs: Date.now() - started
   };
 }
 
-/**
- * Public single-paragraph route.
- * Useful for cursor-only formatting and for direct testing/benchmarking.
- */
 function applyNamedStyleToCurrentParagraph(styleName) {
   const started = Date.now();
   const target = getCurrentParagraph_();
@@ -47,11 +39,6 @@ function applyNamedStyleToCurrentParagraph(styleName) {
   };
 }
 
-/**
- * Public multi-paragraph route.
- * It includes blank paragraphs between the first and last selected paragraph.
- * Every paragraph is formatted by the same single-paragraph function.
- */
 function applyNamedStyleToSelectedParagraphs(styleName) {
   const started = Date.now();
   const targets = getSelectedParagraphsIncludingGaps_();
@@ -61,7 +48,10 @@ function applyNamedStyleToSelectedParagraphs(styleName) {
   }
 
   const context = getNamedStyleContext_(styleName);
-  formatParagraphRange_(targets, styleName, context);
+
+  targets.forEach(p => {
+    formatSingleParagraph_(p, styleName, context);
+  });
 
   return {
     ok: true,
@@ -71,56 +61,60 @@ function applyNamedStyleToSelectedParagraphs(styleName) {
   };
 }
 
-function formatParagraphRange_(paragraphs, styleName, context) {
-  paragraphs.forEach(p => formatSingleParagraph_(p, styleName, context));
-}
-
 /**
- * FAST single-paragraph formatter.
+ * Reliable single-paragraph formatter.
  *
- * Design goal: minimize DocumentApp mutations.
- * Previous versions could execute roughly 8–12 formatting mutations for one
- * heading. This route uses:
- *   1) setHeading()
- *   2) one paragraph setAttributes()
- *   3) one text setAttributes()
- * plus one setText() only when heading text actually needs normalization.
+ * Important:
+ * - Paragraph.setAttributes() is intentionally NOT used here.
+ *   Mixing paragraph and character attributes in one attribute map proved
+ *   unreliable for Normal/Heading formatting.
+ * - setHeading() applies the document's real named style.
+ * - left/right/special indentation are then normalized explicitly.
+ * - character formatting is applied only through the Text element.
  */
 function formatSingleParagraph_(paragraph, styleName, context) {
   const ctx = context || getNamedStyleContext_(styleName);
-  let text = null;
-  let value = '';
 
-  // Read/edit text only when needed.
+  // Do not let the style buttons operate inside a table cell. Tables have
+  // their own formatting rules and this prevents accidental cross-formatting.
+  if (isInsideTable_(paragraph)) {
+    throw new Error('Normal/Heading styles cannot be applied inside a table cell.');
+  }
+
+  // Heading text normalization happens in memory and is written at most once.
   if (styleName !== 'NORMAL') {
-    text = paragraph.editAsText();
-    value = text.getText();
+    const text = paragraph.editAsText();
+    const original = text.getText();
+    const normalized = normalizeHeadingTextValue_(original);
 
-    const normalized = normalizeHeadingTextValue_(value);
-    if (normalized !== value) {
+    if (normalized !== original) {
       text.setText(normalized);
     }
   }
 
-  // Named heading identity.
+  // Apply the actual Google Docs named style.
   paragraph.setHeading(ctx.heading);
 
-  // One paragraph-level mutation. This contains the document style's
-  // paragraph properties plus our required H1/H2/H3 indentation overrides.
-  if (ctx.paragraphAttributes && Object.keys(ctx.paragraphAttributes).length) {
-    paragraph.setAttributes(ctx.paragraphAttributes);
+  // Project rule: Normal + H1-H6 all align to the exact same left axis.
+  paragraph.setIndentStart(0);
+  paragraph.setIndentEnd(0);
+  paragraph.setIndentFirstLine(0);
+  paragraph.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
+
+  const text = paragraph.editAsText();
+  if (!text || !text.getText().length) return;
+
+  // Reapply the named style's character attributes so direct formatting
+  // does not survive unexpectedly (e.g. Normal remaining bold).
+  if (ctx.textAttributes && Object.keys(ctx.textAttributes).length) {
+    text.setAttributes(ctx.textAttributes);
   }
 
-  // One character-level mutation for the whole paragraph.
-  // For headings this includes Bold + 10 pt for BOTH numbering and title.
-  if (!text) text = paragraph.editAsText();
-
-  if (
-    text.getText().length &&
-    ctx.textAttributes &&
-    Object.keys(ctx.textAttributes).length
-  ) {
-    text.setAttributes(ctx.textAttributes);
+  // Project rule: every Heading 1-6 is fully Bold and 10 pt, including
+  // manually typed numbering and the title text.
+  if (styleName !== 'NORMAL') {
+    text.setBold(true);
+    text.setFontSize(10);
   }
 }
 
@@ -136,54 +130,17 @@ function getNamedStyleContext_(styleName) {
   };
 
   const heading = map[styleName];
-  if (!heading) throw new Error('Unknown style.');
-
-  // One named-style lookup for the ENTIRE user operation.
-  const styleAttributes = getActiveBody_().getHeadingAttributes(heading);
-  const paragraphAttributes = getNamedParagraphAttributes_(styleAttributes);
-  const textAttributes = getNamedTextAttributes_(styleAttributes);
-
-  if (styleName !== 'NORMAL') {
-    // All Heading 1–6: entire line, including numbering, Bold / 10 pt.
-    textAttributes[DocumentApp.Attribute.BOLD] = true;
-    textAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
-
-    // Paragraph-level attributes help native numbering inherit the same style.
-    paragraphAttributes[DocumentApp.Attribute.BOLD] = true;
-    paragraphAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
+  if (!heading) {
+    throw new Error('Unknown style: ' + styleName);
   }
 
-  applyHeadingIndentOverridesToAttributes_(paragraphAttributes, styleName);
+  // One style read for the entire operation.
+  const styleAttributes = getActiveBody_().getHeadingAttributes(heading);
 
   return {
     heading: heading,
-    paragraphAttributes: paragraphAttributes,
-    textAttributes: textAttributes
+    textAttributes: getNamedTextAttributes_(styleAttributes)
   };
-}
-
-function getNamedParagraphAttributes_(attrs) {
-  const result = {};
-  const supported = [
-    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
-    DocumentApp.Attribute.LINE_SPACING,
-    DocumentApp.Attribute.SPACING_BEFORE,
-    DocumentApp.Attribute.SPACING_AFTER,
-    DocumentApp.Attribute.INDENT_START,
-    DocumentApp.Attribute.INDENT_END,
-    DocumentApp.Attribute.INDENT_FIRST_LINE,
-    DocumentApp.Attribute.KEEP_WITH_NEXT,
-    DocumentApp.Attribute.BOLD,
-    DocumentApp.Attribute.FONT_SIZE
-  ];
-
-  supported.forEach(attr => {
-    if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      result[attr] = attrs[attr];
-    }
-  });
-
-  return result;
 }
 
 function getNamedTextAttributes_(attrs) {
@@ -208,40 +165,15 @@ function getNamedTextAttributes_(attrs) {
   return result;
 }
 
-function applyHeadingIndentOverridesToAttributes_(attrs, styleName) {
-  // Project alignment rule:
-  // Normal text + Heading 1–6 must all start on the exact same left axis.
-  //
-  // Left indent: 0
-  // Right indent: 0
-  // Special indent: None
-  // Alignment: Left
-  //
-  // These values are folded into the existing paragraph setAttributes()
-  // call, so this does not add extra DocumentApp mutations.
-
-  const textStyles = ['NORMAL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
-  if (textStyles.indexOf(styleName) === -1) return;
-
-  attrs[DocumentApp.Attribute.INDENT_START] = 0;
-  attrs[DocumentApp.Attribute.INDENT_END] = 0;
-  attrs[DocumentApp.Attribute.INDENT_FIRST_LINE] = 0;
-  attrs[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] =
-    DocumentApp.HorizontalAlignment.LEFT;
-}
-
 function normalizeHeadingTextValue_(value) {
   const source = String(value || '');
   if (!source) return source;
 
-  // Sentence case in memory: no intermediate DocumentApp write.
   let normalized = source.toLowerCase().replace(
     /[A-Za-zÁÉÍÓÚÜÑÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÇ]/,
     ch => ch.toUpperCase()
   );
 
-  // Normalize the space after a manual numeric section identifier in the
-  // SAME in-memory pass.
   normalized = normalized.replace(
     /^(\s*\d+(?:\.\d+)*\.?)[\t ]+/,
     '$1 '
@@ -268,49 +200,6 @@ function getCurrentParagraph_() {
   return el || null;
 }
 
-function applyHeadingIndentation_(paragraph, styleName) {
-  const PT_PER_IN = 72;
-
-  const indents = {
-    H1: {left: -0.12, right: 0},
-    H2: {left:  0.00, right: 0},
-    H3: {left:  0.19, right: 0}
-  };
-
-  const cfg = indents[styleName];
-  if (!cfg) return;
-
-  const leftPt = cfg.left * PT_PER_IN;
-  const rightPt = cfg.right * PT_PER_IN;
-
-  // "Special indent: None" means the first line begins at the same
-  // position as the paragraph's left/start indent.
-  paragraph.setIndentStart(leftPt);
-  paragraph.setIndentEnd(rightPt);
-  paragraph.setIndentFirstLine(leftPt);
-  paragraph.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
-}
-
-function normalizeHeadingNumberSpacing_(paragraph) {
-  const text = paragraph.getText();
-  if (!text) return;
-
-  // Examples:
-  // "1.    Introduction"    -> "1. Introduction"
-  // "1.2\tScope"            -> "1.2 Scope"
-  // "1.2.3   Methodology"   -> "1.2.3 Methodology"
-  //
-  // Only affects headings that begin with a numeric section identifier.
-  const normalized = text.replace(
-    /^(\s*\d+(?:\.\d+)*\.?)[\t ]+/,
-    '$1 '
-  );
-
-  if (normalized !== text) {
-    paragraph.editAsText().setText(normalized);
-  }
-}
-
 function getStyleTargetParagraphs_() {
   const doc = DocumentApp.getActiveDocument();
   const selection = doc.getSelection();
@@ -323,14 +212,6 @@ function getStyleTargetParagraphs_() {
   return current ? [current] : [];
 }
 
-/**
- * Returns every Paragraph/ListItem from the first selected paragraph through
- * the last selected paragraph, including blank paragraphs in between.
- *
- * For the common case (same Body or same TableCell parent), this avoids the
- * old RangeElement-by-RangeElement deduplication and gives deterministic
- * coverage of paragraph spacing/gaps.
- */
 function getSelectedParagraphsIncludingGaps_() {
   const selection = DocumentApp.getActiveDocument().getSelection();
   if (!selection) return [];
@@ -356,23 +237,19 @@ function getSelectedParagraphsIncludingGaps_() {
 
   if (!touched.length) return [];
 
-  // Fast/common path: first and last paragraph have the same logical parent.
   const first = touched[0];
   const last = touched[touched.length - 1];
-  const firstParent = first.getParent();
-  const lastParent = last.getParent();
+  const parent = first.getParent();
 
   try {
-    const firstIndex = firstParent.getChildIndex(first);
-    const lastIndex = firstParent.getChildIndex(last);
-
-    // If last is not a child of firstParent, getChildIndex throws.
+    const firstIndex = parent.getChildIndex(first);
+    const lastIndex = parent.getChildIndex(last);
     const minIndex = Math.min(firstIndex, lastIndex);
     const maxIndex = Math.max(firstIndex, lastIndex);
     const result = [];
 
     for (let i = minIndex; i <= maxIndex; i++) {
-      const child = firstParent.getChild(i);
+      const child = parent.getChild(i);
       const type = child.getType();
 
       if (
@@ -385,7 +262,6 @@ function getSelectedParagraphsIncludingGaps_() {
 
     return result;
   } catch (e) {
-    // Cross-container selection fallback (e.g. multiple table cells).
     return getSelectedParagraphs_();
   }
 }

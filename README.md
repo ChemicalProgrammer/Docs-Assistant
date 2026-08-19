@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.8
+# Docs Assistant v0.8.9
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -397,3 +397,21 @@ It is not written into the document or source code.
   - Alignment: Left
 - Removed the previous H1/H2/H3 custom left indents (-0.12 / 0 / 0.19 in).
 - The alignment override is merged into the existing paragraph `setAttributes()` call, so it adds no extra DocumentApp mutations.
+
+
+## v0.8.9 — Reliable Normal / Heading formatter
+- Rebuilt the Normal + Heading 1–6 formatter after v0.8.8 regressions.
+- Removed `Paragraph.setAttributes()` from the named-style path; mixing paragraph and character attributes there was the main reliability risk.
+- Single-paragraph and multi-paragraph paths are explicit:
+  - `applyNamedStyleToCurrentParagraph(styleName)`
+  - `applyNamedStyleToSelectedParagraphs(styleName)`
+- Both use the same `formatSingleParagraph_()` implementation.
+- Named style is applied with `setHeading()`.
+- Paragraph geometry is applied explicitly:
+  - Left 0
+  - Right 0
+  - First line 0
+  - Left alignment
+- Normal text reapplies the document Normal style's character attributes so inherited bold/direct formatting is cleared.
+- Heading 1–6 reapplies named-style character attributes, then forces the complete line to Bold + 10 pt.
+- Table cells are protected from Normal/Heading buttons.

@@ -99,7 +99,11 @@ function fullSmartFormat(e){
 }
 function styleText(s,e){
  if(!beginTask(e.currentTarget,'…'))return;
- google.script.run
+
+ const hasSelection=ctx&&ctx.hasSelection;
+ const method=hasSelection?'applyNamedStyleToSelectedParagraphs':'applyNamedStyleToCurrentParagraph';
+
+ let runner=google.script.run
    .withSuccessHandler(r=>{
      r=r||{};
      const count=r.paragraphs||1;
@@ -107,8 +111,9 @@ function styleText(s,e){
      const mode=r.mode==='single'?'single paragraph':`${count} paragraphs`;
      endTask(true,`Style applied · ${mode}${ms?` · server ${ms} ms`:''}`);
    })
-   .withFailureHandler(fail)
-   .applyNamedStyle(s);
+   .withFailureHandler(fail);
+
+ runner[method](s);
 }
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
