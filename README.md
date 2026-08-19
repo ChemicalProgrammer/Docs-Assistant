@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.4
+# Docs Assistant v0.8.6
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -337,3 +337,35 @@ It is not written into the document or source code.
 - Body membership is now detected by `DocumentApp.ElementType.BODY_SECTION` and validated with `Body.getChildIndex()`.
 - Caption NamedRanges are now created/read/removed through the active `DocumentTab` when available (`tab.newRange()`, `tab.addNamedRange()`, `tab.getNamedRanges()`), with legacy Document fallback.
 - The user workflow remains: cursor on first caption -> Start at -> Set here.
+
+
+## v0.8.5 — Performance + equations
+- Performance:
+  - Named-style attributes are loaded once per formatting operation and reused across selected paragraphs.
+  - Removed redundant named-style lookups and one redundant heading assignment.
+  - Text-style attributes are filtered once per operation.
+  - Sidebar controls unlock as soon as the Apps Script call completes; the previous fixed 700 ms post-success lock was removed.
+  - Success feedback remains visible briefly (180 ms) without blocking the next action.
+  - Simple formatting actions no longer trigger caption-numbering reads after every click.
+- Equations:
+  - Added `∑ Format equation row`.
+  - Uses a borderless 3-cell table with symmetric side columns so the equation remains centered on the page.
+  - Deep-copies the original paragraph so embedded Google Docs Equation elements are preserved.
+  - Adds a dotted leader and bold/italic `Equation N` in the right cell.
+  - Automatically increments from prior equation rows.
+  - Removes borders and cell padding for a cleaner technical layout.
+
+
+## v0.8.6 — Complete headings + table-cell bullets
+- Heading 1–6:
+  - the complete heading is forced to Bold and 10 pt;
+  - this includes manually typed numbering and the title text;
+  - paragraph-level Bold/10 pt is also applied so native numbered-heading glyphs inherit the same formatting;
+  - all other named-style properties remain based on the document's current Heading style.
+- Bullets:
+  - the existing Bullet button now detects whether each target is inside a TableCell;
+  - normal body bullets remain Left 0.06 in / Hanging 0.25 in;
+  - bullets inside table cells use Left 0.00 in / Hanging 0.20 in;
+  - native bullet listId/glyph are preserved;
+  - Continue previous bullet detection uses the correct indentation for body vs table-cell context;
+  - Full Smart Format uses the same table-aware bullet indentation.

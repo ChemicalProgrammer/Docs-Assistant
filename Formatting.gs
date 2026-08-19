@@ -1,14 +1,25 @@
 function applyNamedStyle(styleName) {
+  const started = Date.now();
   const targets = getStyleTargetParagraphs_();
+
   if (!targets.length) {
     throw new Error('Select text or place the cursor in the paragraph you want to format.');
   }
 
-  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
-  return true;
+  // Build once per operation. The previous implementation retrieved the
+  // active body and named-style attributes again for every paragraph.
+  const context = getNamedStyleContext_(styleName);
+
+  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName, context));
+
+  return {
+    ok: true,
+    paragraphs: targets.length,
+    elapsedMs: Date.now() - started
+  };
 }
 
-function applyNamedStyleToParagraph_(p, styleName) {
+function getNamedStyleContext_(styleName) {
   const map = {
     NORMAL: DocumentApp.ParagraphHeading.NORMAL,
     H1: DocumentApp.ParagraphHeading.HEADING1,
@@ -22,20 +33,61 @@ function applyNamedStyleToParagraph_(p, styleName) {
   const heading = map[styleName];
   if (!heading) throw new Error('Unknown style.');
 
-  const body = getActiveBody_();
-  const styleAttributes = body.getHeadingAttributes(heading);
+  const styleAttributes = getActiveBody_().getHeadingAttributes(heading);
+
+  // Project rule for ALL Heading buttons:
+  // the complete heading — including a manual or native list number —
+  // must be Bold and 10 pt.
+  //
+  // We keep the rest of the document named-style attributes intact.
+  if (styleName !== 'NORMAL') {
+    styleAttributes[DocumentApp.Attribute.BOLD] = true;
+    styleAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
+  }
+
+  return {
+    heading: heading,
+    styleAttributes: styleAttributes,
+    textAttributes: getNamedTextAttributes_(styleAttributes)
+  };
+}
+
+function getNamedTextAttributes_(attrs) {
+  const textAttrs = {};
+  const supported = [
+    DocumentApp.Attribute.FONT_FAMILY,
+    DocumentApp.Attribute.FONT_SIZE,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.ITALIC,
+    DocumentApp.Attribute.UNDERLINE,
+    DocumentApp.Attribute.STRIKETHROUGH,
+    DocumentApp.Attribute.FOREGROUND_COLOR,
+    DocumentApp.Attribute.BACKGROUND_COLOR
+  ];
+
+  supported.forEach(attr => {
+    if (attrs[attr] !== undefined && attrs[attr] !== null) {
+      textAttrs[attr] = attrs[attr];
+    }
+  });
+
+  return textAttrs;
+}
+
+function applyNamedStyleToParagraph_(p, styleName, context) {
+  const ctx = context || getNamedStyleContext_(styleName);
 
   if (styleName !== 'NORMAL') {
     const currentText = p.getText();
     const converted = sentenceCaseHeading_(currentText);
+
     if (converted !== currentText) {
       p.editAsText().setText(converted);
     }
   }
 
-  p.setHeading(heading);
-  p.setAttributes(styleAttributes);
-  p.setHeading(heading);
+  p.setAttributes(ctx.styleAttributes);
+  p.setHeading(ctx.heading);
 
   applyHeadingIndentation_(p, styleName);
 
@@ -43,7 +95,33 @@ function applyNamedStyleToParagraph_(p, styleName) {
     normalizeHeadingNumberSpacing_(p);
   }
 
-  applyNamedTextAttributes_(p, styleAttributes);
+  applyNamedTextAttributes_(p, ctx.textAttributes, true);
+
+  if (styleName !== 'NORMAL') {
+    enforceHeadingBold10_(p);
+  }
+}
+
+function enforceHeadingBold10_(paragraph) {
+  // Direct paragraph attributes are important for native numbered headings:
+  // they help the list-number glyph inherit the same Bold / 10 pt formatting.
+  const attrs = {};
+  attrs[DocumentApp.Attribute.BOLD] = true;
+  attrs[DocumentApp.Attribute.FONT_SIZE] = 10;
+
+  try {
+    paragraph.setAttributes(attrs);
+  } catch (e) {}
+
+  // Explicitly style every text character too, including manually typed
+  // section numbers such as "7.3.3".
+  try {
+    const text = paragraph.editAsText();
+    if (text && text.getText().length) {
+      text.setBold(true);
+      text.setFontSize(10);
+    }
+  } catch (e) {}
 }
 
 function applyHeadingIndentation_(paragraph, styleName) {
@@ -133,29 +211,13 @@ function getActiveBody_() {
   return doc.getBody();
 }
 
-function applyNamedTextAttributes_(paragraph, attrs) {
+function applyNamedTextAttributes_(paragraph, attrs, alreadyFiltered) {
   const text = paragraph.editAsText();
   if (!text || text.getText().length === 0) return;
 
-  const textAttrs = {};
-  const supported = [
-    DocumentApp.Attribute.FONT_FAMILY,
-    DocumentApp.Attribute.FONT_SIZE,
-    DocumentApp.Attribute.BOLD,
-    DocumentApp.Attribute.ITALIC,
-    DocumentApp.Attribute.UNDERLINE,
-    DocumentApp.Attribute.STRIKETHROUGH,
-    DocumentApp.Attribute.FOREGROUND_COLOR,
-    DocumentApp.Attribute.BACKGROUND_COLOR
-  ];
+  const textAttrs = alreadyFiltered ? attrs : getNamedTextAttributes_(attrs);
 
-  supported.forEach(attr => {
-    if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      textAttrs[attr] = attrs[attr];
-    }
-  });
-
-  if (Object.keys(textAttrs).length) {
+  if (textAttrs && Object.keys(textAttrs).length) {
     text.setAttributes(textAttrs);
   }
 }
@@ -216,41 +278,41 @@ function applyNativeBulletPreset_(paragraphs, continuePrevious) {
     ? findPreviousSafeNativeBullet_(paragraphs[0])
     : null;
 
+  let tableBullets = 0;
+  let bodyBullets = 0;
+
   paragraphs.forEach(p => {
-    // Already a real bullet: preserve listId/glyph, just normalize style/indent.
+    const targetInsideTable = isInsideTable_(p);
+
     if (isExistingNativeListOfType_(p, 'BULLET')) {
-      normalizeExistingNativeListParagraph_(p);
+      normalizeExistingNativeListParagraph_(p, 'BULLET');
       if (!anchor) anchor = p.asListItem();
+
+      if (targetInsideTable) tableBullets++;
+      else bodyBullets++;
       return;
     }
 
-    // Convert only the selected paragraph/item to a native bullet.
     const item = convertToSafeNativeBullet_(p, anchor);
-    normalizeExistingNativeListParagraph_(item);
+    normalizeExistingNativeListParagraph_(item, 'BULLET');
 
     if (!anchor) anchor = item;
+
+    if (isInsideTable_(item)) tableBullets++;
+    else bodyBullets++;
   });
 
   return {
     ok: true,
     requestedContinue: continuePrevious,
     nativeBullets: true,
-    leftIndentInches: 0.06,
-    hangingIndentInches: 0.25
+    bodyBullets: bodyBullets,
+    tableBullets: tableBullets,
+    bodyIndent: {left: 0.06, hanging: 0.25},
+    tableIndent: {left: 0.00, hanging: 0.20}
   };
 }
 
-/**
- * Convert one target into a native ListItem without ever changing the
- * list definition of neighboring headings/lists.
- *
- * If an anchor bullet exists, the new item joins it by listId and we never
- * call setGlyphType().
- *
- * If there is no anchor, the new ListItem is created between two temporary
- * normal paragraphs so Google Docs cannot inherit a neighboring listId.
- * Only while isolated do we set its glyph to BULLET.
- */
 function convertToSafeNativeBullet_(p, anchor) {
   const parent = p.getParent();
   const idx = parent.getChildIndex(p);
@@ -296,7 +358,7 @@ function findPreviousSafeNativeBullet_(target) {
     if (!isExistingNativeListOfType_(child, 'BULLET')) continue;
 
     // Prefer a bullet already using this Add-on's expected geometry.
-    if (matchesAddonListIndent_(child.asListItem())) {
+    if (matchesAddonListIndent_(child.asListItem(), 'BULLET')) {
       return child.asListItem();
     }
   }
@@ -322,7 +384,7 @@ function applyManualListPreset_(paragraphs, type, continuePrevious) {
     // That keeps automatic a)->b), 1.->2., etc. intact and cannot alter
     // neighboring heading-numbering definitions.
     if (isExistingNativeListOfType_(p, type)) {
-      normalizeExistingNativeListParagraph_(p);
+      normalizeExistingNativeListParagraph_(p, type);
       return;
     }
 
@@ -382,43 +444,34 @@ function isExistingNativeListOfType_(p, type) {
   return false;
 }
 
-function normalizeExistingNativeListParagraph_(item) {
-  // Preserve automatic numbering/list structure:
-  // - DO NOT change listId
-  // - DO NOT change glyph type
-  // - DO NOT recreate the ListItem
+function normalizeExistingNativeListParagraph_(item, listType) {
+  // Preserve native Google Docs list structure:
+  // - listId unchanged
+  // - glyph type unchanged
   //
-  // Only normalize the paragraph style + the local indentation required
-  // by this Add-on.
+  // Only style/indent the selected ListItem.
 
   try {
     item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
   } catch (e) {}
 
-  // Required list indentation:
-  // Left = 0.06 in
-  // Hanging = 0.25 in
-  // Right = 0
-  //
-  // In Google Docs paragraph geometry this means:
-  // first line starts at 0.06 in,
-  // wrapped lines start at 0.31 in.
+  const cfg = getNativeListIndentConfig_(item, listType);
   const PT_PER_IN = 72;
-  const firstLinePt = 0.06 * PT_PER_IN;
-  const startPt = (0.06 + 0.25) * PT_PER_IN;
 
-  item.setIndentFirstLine(firstLinePt);
-  item.setIndentStart(startPt);
+  // In Docs geometry:
+  // first-line position = Left
+  // wrapped-line position = Left + Hanging
+  item.setIndentFirstLine(cfg.left * PT_PER_IN);
+  item.setIndentStart((cfg.left + cfg.hanging) * PT_PER_IN);
   item.setIndentEnd(0);
 
-  // Prevent accidental whole-line bold inherited from the paragraph above,
-  // while preserving mixed inline formatting.
+  // Prevent accidental whole-line bold inherited from a preceding heading,
+  // while leaving mixed rich text alone.
   const text = item.editAsText();
   const value = text.getText();
   if (!value) return;
 
-  const body = getActiveBody_();
-  const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
+  const normalAttrs = getActiveBody_().getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
   const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
 
   if (normalBold !== true) {
@@ -427,6 +480,21 @@ function normalizeExistingNativeListParagraph_(item) {
       text.setBold(false);
     }
   }
+}
+
+function getNativeListIndentConfig_(item, listType) {
+  // Special rule requested for BULLETS inside a table cell.
+  if (listType === 'BULLET' && isInsideTable_(item)) {
+    return {
+      left: 0.00,
+      hanging: 0.20
+    };
+  }
+
+  return {
+    left: 0.06,
+    hanging: 0.25
+  };
 }
 
 function recreateAsParagraph_(p) {
@@ -501,7 +569,7 @@ function findPreviousListOrdinal_(target, type) {
     if (child.getType() === DocumentApp.ElementType.LIST_ITEM) {
       const item = child.asListItem();
 
-      if (!matchesAddonListIndent_(item)) continue;
+      if (!matchesAddonListIndent_(item, type)) continue;
 
       try {
         const glyph = item.getGlyphType();
@@ -542,9 +610,10 @@ function getManualListOrdinal_(value, type) {
   return 0;
 }
 
-function matchesAddonListIndent_(item) {
-  const EXPECTED_START = (0.06 + 0.25) * 72;
-  const EXPECTED_FIRST = 0.06 * 72;
+function matchesAddonListIndent_(item, listType) {
+  const cfg = getNativeListIndentConfig_(item, listType);
+  const EXPECTED_START = (cfg.left + cfg.hanging) * 72;
+  const EXPECTED_FIRST = cfg.left * 72;
   const TOLERANCE = 1.5;
 
   try {
@@ -668,7 +737,7 @@ function stripAnyListPrefixText_(value) {
  */
 function applyListFormatToParagraph_(p, type) {
   if (isExistingNativeListOfType_(p, type)) {
-    normalizeExistingNativeListParagraph_(p);
+    normalizeExistingNativeListParagraph_(p, type);
     return p;
   }
 
@@ -681,8 +750,9 @@ function applyListFormatToParagraph_(p, type) {
 
   if (type === 'BULLET') {
     // Full Smart Format must also create a REAL bullet, not a text character.
-    // The current paragraph is converted safely into an isolated native bullet.
-    return convertToSafeNativeBullet_(paragraph, null);
+    const item = convertToSafeNativeBullet_(paragraph, null);
+    normalizeExistingNativeListParagraph_(item, 'BULLET');
+    return item;
   } else if (type === 'NUMBER') {
     const n = getManualListOrdinal_(original, 'NUMBER') || 1;
     paragraph.setText(String(n) + '. ' + content);
@@ -748,6 +818,152 @@ function eachSelectedParagraph_(fn) {
   paragraphs.forEach(fn);
 }
 
+
+function formatEquationLine() {
+  const targets = getStyleTargetParagraphs_();
+
+  if (targets.length !== 1) {
+    throw new Error('Place the cursor in one equation line or select only that line.');
+  }
+
+  const source = targets[0];
+
+  if (isInsideTable_(source)) {
+    throw new Error('The equation line is already inside a table.');
+  }
+
+  if (source.getType() !== DocumentApp.ElementType.PARAGRAPH) {
+    throw new Error('Equation formatting requires a normal paragraph, not a list item.');
+  }
+
+  const body = getActiveBody_();
+  const top = getTopLevelElementForParent_(source, body);
+
+  if (!top || top.getType() !== DocumentApp.ElementType.PARAGRAPH) {
+    throw new Error('The equation line must be a body-level paragraph.');
+  }
+
+  const sourceParagraph = top.asParagraph();
+  const sourceIndex = body.getChildIndex(sourceParagraph);
+  const equationNumber = getNextEquationNumberBeforeIndex_(body, sourceIndex);
+
+  // Paragraph.copy() is a deep copy, so a real embedded Equation remains
+  // an Equation rather than being flattened to plain text.
+  const sourceCopy = sourceParagraph.copy();
+
+  const table = body.insertTable(sourceIndex, [['', '', '']]);
+  table.setBorderWidth(0);
+
+  // Symmetric side columns keep the center cell geometrically centered.
+  const usableWidth = Math.max(
+    360,
+    Number(body.getPageWidth()) - Number(body.getMarginLeft()) - Number(body.getMarginRight())
+  );
+  const sideWidth = usableWidth * 0.22;
+  const centerWidth = usableWidth * 0.56;
+
+  table.setColumnWidth(0, sideWidth);
+  table.setColumnWidth(1, centerWidth);
+  table.setColumnWidth(2, sideWidth);
+
+  const row = table.getRow(0);
+  row.setMinimumHeight(24);
+
+  const leftCell = row.getCell(0);
+  const centerCell = row.getCell(1);
+  const rightCell = row.getCell(2);
+
+  [leftCell, centerCell, rightCell].forEach(cell => {
+    cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
+    cell.setPaddingTop(0);
+    cell.setPaddingBottom(0);
+    cell.setPaddingLeft(0);
+    cell.setPaddingRight(0);
+  });
+
+  leftCell.setText('');
+
+  // Center: preserve rich content/equation.
+  centerCell.clear();
+  const centerParagraph = centerCell.appendParagraph(sourceCopy);
+  removeEmptyCellParagraphsExcept_(centerCell, centerParagraph);
+  centerParagraph.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  centerParagraph.setIndentStart(0);
+  centerParagraph.setIndentEnd(0);
+  centerParagraph.setIndentFirstLine(0);
+  centerParagraph.setSpacingBefore(0);
+  centerParagraph.setSpacingAfter(0);
+
+  // Right: dotted leader + Equation N.
+  const label = '.................... Equation ' + equationNumber;
+  rightCell.setText(label);
+
+  const rightParagraph = rightCell.getChild(0).asParagraph();
+  rightParagraph.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+  rightParagraph.setIndentStart(0);
+  rightParagraph.setIndentEnd(0);
+  rightParagraph.setIndentFirstLine(0);
+  rightParagraph.setSpacingBefore(0);
+  rightParagraph.setSpacingAfter(0);
+
+  const rightText = rightParagraph.editAsText();
+  rightText.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
+
+  const labelStart = label.indexOf('Equation ');
+  if (labelStart >= 0) {
+    rightText.setBold(labelStart, label.length - 1, true);
+    rightText.setItalic(labelStart, label.length - 1, true);
+  }
+
+  sourceParagraph.removeFromParent();
+
+  return {
+    ok: true,
+    equationNumber: equationNumber
+  };
+}
+
+function removeEmptyCellParagraphsExcept_(cell, keepParagraph) {
+  if (cell.getNumChildren() <= 1) return;
+
+  for (let i = cell.getNumChildren() - 1; i >= 0; i--) {
+    const child = cell.getChild(i);
+
+    // Avoid wrapper identity assumptions: the kept paragraph has content
+    // copied from the source; only delete empty paragraphs.
+    if (
+      child.getType() === DocumentApp.ElementType.PARAGRAPH &&
+      child.asParagraph().getText() === '' &&
+      cell.getNumChildren() > 1
+    ) {
+      try { child.removeFromParent(); } catch (e) {}
+    }
+  }
+}
+
+function getNextEquationNumberBeforeIndex_(body, targetIndex) {
+  let maxNumber = 0;
+
+  for (let i = 0; i < targetIndex; i++) {
+    const child = body.getChild(i);
+    if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
+
+    const table = child.asTable();
+    if (table.getNumRows() < 1) continue;
+
+    const row = table.getRow(0);
+    if (row.getNumCells() !== 3) continue;
+
+    const rightText = row.getCell(2).getText();
+    const match = String(rightText || '').match(/\bEquation\s+(\d+)\s*$/i);
+
+    if (match) {
+      maxNumber = Math.max(maxNumber, Number(match[1]) || 0);
+    }
+  }
+
+  return maxNumber + 1;
+}
 
 function formatSelectedTable() {
   const table = getActiveTable_();

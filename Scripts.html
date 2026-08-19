@@ -24,19 +24,29 @@ function beginTask(btn,label){
  btn.innerHTML='<span class="task-spinner"></span>'+label;
  return true;
 }
-function endTask(ok,msg){
+function endTask(ok,msg,refresh=false){
  if(!activeButton)return;
+
  const b=activeButton;
+ const original=activeOriginal;
+
  b.classList.remove('task-active');
  b.innerHTML=ok?'✓ Done':'! Error';
  b.classList.add(ok?'task-success':'task-error');
  status(msg||'');
+
+ // Unlock immediately instead of intentionally holding the UI for 700 ms.
+ taskRunning=false;
+ activeButton=null;
+ activeOriginal='';
+ unlockAll();
+
+ if(refresh)refreshContext();
+
  setTimeout(()=>{
    b.classList.remove('task-success','task-error');
-   b.innerHTML=activeOriginal;
-   taskRunning=false;activeButton=null;activeOriginal='';
-   unlockAll();refreshContext();
- },700);
+   b.innerHTML=original;
+ },180);
 }
 function fail(e){endTask(false,e.message||String(e))}
 function runServer(btn,label,fn,args=[],success='Done'){
@@ -51,7 +61,6 @@ function refreshContext(){
   if(!taskRunning)document.getElementById('replaceBtn').disabled=!c.hasSelection;
  }).getDocumentContext();
 
- refreshCaptionNumberingSettings();
 }
 
 function refreshCaptionNumberingSettings(){
@@ -138,6 +147,16 @@ function renumberCaptions(e){
 function formatTable(e){
  runServer(e.currentTarget,'Formatting…','formatSelectedTable',[],'Table formatted');
 }
+function formatEquation(e){
+ if(!beginTask(e.currentTarget,'Formatting…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     const n=r&&r.equationNumber?r.equationNumber:'';
+     endTask(true,n?`Equation ${n} formatted`:'Equation formatted',true);
+   })
+   .withFailureHandler(fail)
+   .formatEquationLine();
+}
 function addBreak(e){runServer(e.currentTarget,'Inserting…','insertBreak',[document.getElementById('breakKind').value],'Break inserted')}
 function smartApply(e){
  const text=document.getElementById('rawText').value.trim();
@@ -158,4 +177,5 @@ function showResult(t){document.getElementById('result').value=t;document.getEle
 function applyResult(mode,e){runServer(e.currentTarget,mode==='REPLACE'?'Replacing…':'Inserting…','insertGeminiResult',[document.getElementById('result').value,mode],'Applied to document')}
 function openSettings(){if(!taskRunning)google.script.run.showSettings()}
 refreshContext();
+refreshCaptionNumberingSettings();
 </script>
