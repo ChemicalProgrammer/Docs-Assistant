@@ -118,6 +118,53 @@ function styleText(s,e){
    .withFailureHandler(fail)
    .applyNamedStyle(s);
 }
+function toggleIndentBy(){
+ const mode=document.getElementById('indentSpecial').value;
+ document.getElementById('indentByWrap').classList.toggle('hidden',mode==='NONE');
+}
+
+function loadIndentation(e){
+ if(!beginTask(e.currentTarget,'Loading…'))return;
+
+ google.script.run
+   .withSuccessHandler(r=>{
+     r=r||{};
+     document.getElementById('indentLeft').value=
+       Number.isFinite(Number(r.left))?r.left:0;
+     document.getElementById('indentRight').value=
+       Number.isFinite(Number(r.right))?r.right:0;
+     document.getElementById('indentSpecial').value=r.special||'NONE';
+     document.getElementById('indentBy').value=
+       Number.isFinite(Number(r.by))?r.by:0;
+     toggleIndentBy();
+     endTask(true,'Indentation loaded');
+   })
+   .withFailureHandler(fail)
+   .getCurrentIndentation();
+}
+
+function applyIndentationUi(e){
+ const left=parseFloat(document.getElementById('indentLeft').value);
+ const right=parseFloat(document.getElementById('indentRight').value);
+ const special=document.getElementById('indentSpecial').value;
+ const by=special==='NONE'?0:parseFloat(document.getElementById('indentBy').value);
+
+ if(!Number.isFinite(left)||!Number.isFinite(right)||!Number.isFinite(by)){
+   status('Enter valid indentation values.');
+   return;
+ }
+
+ if(!beginTask(e.currentTarget,'Applying…'))return;
+
+ google.script.run
+   .withSuccessHandler(r=>{
+     const count=r&&r.paragraphs?r.paragraphs:1;
+     endTask(true,`Indentation applied · ${count} paragraph${count===1?'':'s'}`);
+   })
+   .withFailureHandler(fail)
+   .applyIndentation(left,right,special,by);
+}
+
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
@@ -198,4 +245,5 @@ function applyResult(mode,e){runServer(e.currentTarget,mode==='REPLACE'?'Replaci
 function openSettings(){if(!taskRunning)google.script.run.showSettings()}
 refreshContext();
 refreshCaptionNumberingSettings();
+toggleIndentBy();
 </script>

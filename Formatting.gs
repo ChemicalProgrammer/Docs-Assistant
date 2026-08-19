@@ -221,6 +221,120 @@ function sentenceCaseHeading_(value) {
   );
 }
 
+function getCurrentIndentation() {
+  const target = getCurrentParagraph_() || getFirstSelectedParagraph_();
+
+  if (!target) {
+    throw new Error('Place the cursor in a paragraph or select text first.');
+  }
+
+  const PT_PER_IN = 72;
+  const start = Number(target.getIndentStart() || 0) / PT_PER_IN;
+  const end = Number(target.getIndentEnd() || 0) / PT_PER_IN;
+  const first = Number(target.getIndentFirstLine() || 0) / PT_PER_IN;
+
+  let special = 'NONE';
+  let by = 0;
+
+  if (first > start + 0.001) {
+    special = 'FIRST_LINE';
+    by = first - start;
+  } else if (start > first + 0.001) {
+    special = 'HANGING';
+    by = start - first;
+  }
+
+  return {
+    left: roundIndentValue_(special === 'HANGING' ? first : start),
+    right: roundIndentValue_(end),
+    special: special,
+    by: roundIndentValue_(by)
+  };
+}
+
+function applyIndentation(left, right, special, by) {
+  const paragraphs = getStyleTargetParagraphs_();
+
+  if (!paragraphs.length) {
+    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
+  }
+
+  const leftIn = Number(left);
+  const rightIn = Number(right);
+  const byIn = Number(by || 0);
+  const mode = String(special || 'NONE').toUpperCase();
+
+  if (!Number.isFinite(leftIn) || !Number.isFinite(rightIn) || !Number.isFinite(byIn)) {
+    throw new Error('Indentation values must be valid numbers.');
+  }
+
+  if (leftIn < 0 || rightIn < 0 || byIn < 0) {
+    throw new Error('Indentation values cannot be negative.');
+  }
+
+  if (['NONE', 'FIRST_LINE', 'HANGING'].indexOf(mode) === -1) {
+    throw new Error('Unknown special indent.');
+  }
+
+  const PT_PER_IN = 72;
+  const leftPt = leftIn * PT_PER_IN;
+  const rightPt = rightIn * PT_PER_IN;
+  const byPt = byIn * PT_PER_IN;
+
+  paragraphs.forEach(p => {
+    if (mode === 'HANGING') {
+      // Google Docs geometry:
+      // first line starts at Left;
+      // wrapped lines start at Left + Hanging.
+      p.setIndentFirstLine(leftPt);
+      p.setIndentStart(leftPt + byPt);
+    } else if (mode === 'FIRST_LINE') {
+      // Wrapped lines start at Left;
+      // first line starts at Left + By.
+      p.setIndentStart(leftPt);
+      p.setIndentFirstLine(leftPt + byPt);
+    } else {
+      p.setIndentStart(leftPt);
+      p.setIndentFirstLine(leftPt);
+    }
+
+    p.setIndentEnd(rightPt);
+  });
+
+  return {
+    ok: true,
+    paragraphs: paragraphs.length,
+    left: leftIn,
+    right: rightIn,
+    special: mode,
+    by: byIn
+  };
+}
+
+function getFirstSelectedParagraph_() {
+  const selection = DocumentApp.getActiveDocument().getSelection();
+  if (!selection) return null;
+
+  const ranges = selection.getRangeElements();
+  if (!ranges.length) return null;
+
+  let el = ranges[0].getElement();
+
+  while (
+    el &&
+    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+    el.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    el = el.getParent();
+  }
+
+  return el || null;
+}
+
+function roundIndentValue_(value) {
+  return Math.round(Number(value || 0) * 1000) / 1000;
+}
+
 function setParagraphSpacing(before, after, lineSpacing) {
   eachSelectedParagraph_(p => {
     if (before !== null && before !== undefined) p.setSpacingBefore(Number(before));

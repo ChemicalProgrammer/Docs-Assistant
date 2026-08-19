@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.0
+# Docs Assistant v0.9.1
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -429,3 +429,20 @@ It is not written into the document or source code.
   - server execution time;
   - total client-observed time.
   If server time is small but total time is large, the remaining delay is Apps Script / `google.script.run` startup or transport latency, not the formatting function itself.
+
+
+## v0.9.1 — Indentation controls
+- Added an Indentation section to the Formatting sidebar inspired by the native Google Docs indentation dialog.
+- Controls:
+  - Left (inches)
+  - Right (inches)
+  - Special indent: None / First line / Hanging
+  - By (shown only for First line/Hanging)
+  - Load current
+  - Apply
+- The function works with either the cursor in one paragraph or a multi-paragraph selection.
+- It changes only indentation; it does not alter Named Style, font, size, bold, capitalization, or alignment.
+- Geometry:
+  - None: first line = left, wrapped lines = left
+  - First line: first line = left + by, wrapped lines = left
+  - Hanging: first line = left, wrapped lines = left + by

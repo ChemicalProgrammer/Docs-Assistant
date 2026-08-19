@@ -61,6 +61,47 @@
         </div>
       </div>
 
+      <div class="group indentationGroup">
+        <label>INDENTATION</label>
+
+        <div class="indentHeader">Indentation <span>(inches)</span></div>
+
+        <div class="indentGrid">
+          <div class="fieldCard">
+            <div class="fieldLabel">Left</div>
+            <input id="indentLeft" type="number" step="0.01" min="0" value="0">
+          </div>
+
+          <div class="fieldCard">
+            <div class="fieldLabel">Right</div>
+            <input id="indentRight" type="number" step="0.01" min="0" value="0">
+          </div>
+        </div>
+
+        <div class="specialIndentBlock">
+          <div class="fieldLabel specialLabel">Special indent</div>
+          <div class="specialIndentGrid">
+            <select id="indentSpecial" onchange="toggleIndentBy()">
+              <option value="NONE">None</option>
+              <option value="FIRST_LINE">First line</option>
+              <option value="HANGING">Hanging</option>
+            </select>
+
+            <div id="indentByWrap" class="hidden">
+              <div class="fieldLabel">By</div>
+              <input id="indentBy" type="number" step="0.01" min="0" value="0.2">
+            </div>
+          </div>
+        </div>
+
+        <div class="indentActions">
+          <button class="btn-indent-secondary" onclick="loadIndentation(event)">Load current</button>
+          <button class="btn-indent-primary" onclick="applyIndentationUi(event)">Apply</button>
+        </div>
+
+        <div class="smartHint">Applies only paragraph indentation. It does not change the current Normal/Heading style, font, size, bold, or alignment.</div>
+      </div>
+
       <div class="group">
         <label>EQUATION</label>
         <button class="wide btn-equation" onclick="formatEquation(event)">∑ Format equation row</button>

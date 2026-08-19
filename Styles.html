@@ -58,6 +58,95 @@ textarea{width:100%;min-height:110px;padding:11px;resize:vertical;margin-bottom:
 .btn-renumber{margin-top:10px;background:linear-gradient(135deg,#4f46e5,#7c4dd8);border:0;color:#fff}
 .counterHint{margin-top:2px}
 
+
+.indentationGroup{
+  background:linear-gradient(180deg,#fff,#fbfcff);
+}
+.indentHeader{
+  font-size:13px;
+  font-weight:700;
+  color:#3c4043;
+  margin:1px 0 10px;
+}
+.indentHeader span{
+  font-size:10px;
+  font-weight:600;
+  color:#8a9099;
+}
+.indentGrid{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:9px;
+  margin-bottom:13px;
+}
+.fieldCard{
+  position:relative;
+  border:1px solid #cfd4dc;
+  border-radius:12px;
+  padding:13px 10px 7px;
+  background:#fff;
+}
+.fieldCard:focus-within{
+  border-color:#4f7de8;
+  box-shadow:0 0 0 2px rgba(79,125,232,.12);
+}
+.fieldLabel{
+  font-size:10px;
+  font-weight:700;
+  color:#737980;
+  margin-bottom:4px;
+}
+.fieldCard .fieldLabel{
+  position:absolute;
+  top:-7px;
+  left:10px;
+  background:#fff;
+  padding:0 4px;
+}
+.fieldCard input{
+  border:0!important;
+  box-shadow:none!important;
+  margin:0!important;
+  padding:4px!important;
+  font-size:15px;
+  background:transparent;
+}
+.specialIndentBlock{
+  margin-top:4px;
+}
+.specialLabel{
+  margin:0 0 7px 2px;
+}
+.specialIndentGrid{
+  display:grid;
+  grid-template-columns:1fr 84px;
+  gap:8px;
+  align-items:end;
+}
+.specialIndentGrid select,
+.specialIndentGrid input{
+  margin:0;
+}
+#indentByWrap .fieldLabel{
+  margin:0 0 4px 2px;
+}
+.indentActions{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:8px;
+  margin-top:12px;
+  margin-bottom:8px;
+}
+.btn-indent-primary{
+  background:linear-gradient(135deg,#1967d2,#4f7de8);
+  color:#fff;
+  border:0;
+}
+.btn-indent-secondary{
+  background:#f5f7fa;
+  color:#3c4043;
+}
+
 /* Only the active button animates. No page overlay. */
 .task-active{opacity:1!important;pointer-events:none}
 .task-active:after{content:"";position:absolute;top:0;bottom:0;width:42%;left:-50%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.42),transparent);animation:buttonSweep .85s linear infinite}
