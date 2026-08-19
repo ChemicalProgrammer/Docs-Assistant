@@ -6,11 +6,7 @@ function applyNamedStyle(styleName) {
     throw new Error('Select text or place the cursor in the paragraph you want to format.');
   }
 
-  const context = getNamedStyleContext_(styleName);
-
-  targets.forEach(p => {
-    formatSingleParagraph_(p, styleName, context);
-  });
+  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
 
   return {
     ok: true,
@@ -20,6 +16,10 @@ function applyNamedStyle(styleName) {
   };
 }
 
+/**
+ * Cursor-only public route.
+ * Uses the exact same low-level formatter as every other named-style caller.
+ */
 function applyNamedStyleToCurrentParagraph(styleName) {
   const started = Date.now();
   const target = getCurrentParagraph_();
@@ -28,8 +28,7 @@ function applyNamedStyleToCurrentParagraph(styleName) {
     throw new Error('Place the cursor in the paragraph you want to format.');
   }
 
-  const context = getNamedStyleContext_(styleName);
-  formatSingleParagraph_(target, styleName, context);
+  applyNamedStyleToParagraph_(target, styleName);
 
   return {
     ok: true,
@@ -39,6 +38,10 @@ function applyNamedStyleToCurrentParagraph(styleName) {
   };
 }
 
+/**
+ * Selection public route.
+ * Includes blank paragraphs between the first and last selected paragraph.
+ */
 function applyNamedStyleToSelectedParagraphs(styleName) {
   const started = Date.now();
   const targets = getSelectedParagraphsIncludingGaps_();
@@ -47,11 +50,7 @@ function applyNamedStyleToSelectedParagraphs(styleName) {
     throw new Error('Select one or more paragraphs first.');
   }
 
-  const context = getNamedStyleContext_(styleName);
-
-  targets.forEach(p => {
-    formatSingleParagraph_(p, styleName, context);
-  });
+  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
 
   return {
     ok: true,
@@ -62,63 +61,25 @@ function applyNamedStyleToSelectedParagraphs(styleName) {
 }
 
 /**
- * Reliable single-paragraph formatter.
+ * THE single named-style formatter used by the entire Add-on.
  *
- * Important:
- * - Paragraph.setAttributes() is intentionally NOT used here.
- *   Mixing paragraph and character attributes in one attribute map proved
- *   unreliable for Normal/Heading formatting.
- * - setHeading() applies the document's real named style.
- * - left/right/special indentation are then normalized explicitly.
- * - character formatting is applied only through the Text element.
+ * It intentionally does not:
+ * - read heading attributes;
+ * - force font/size/bold;
+ * - change capitalization;
+ * - change indentation/alignment;
+ * - copy direct formatting;
+ * - call Gemini.
+ *
+ * `setHeading()` tells Google Docs to apply the document's CURRENT named
+ * style, whatever that style is configured to be.
  */
-function formatSingleParagraph_(paragraph, styleName, context) {
-  const ctx = context || getNamedStyleContext_(styleName);
-
-  // Do not let the style buttons operate inside a table cell. Tables have
-  // their own formatting rules and this prevents accidental cross-formatting.
-  if (isInsideTable_(paragraph)) {
-    throw new Error('Normal/Heading styles cannot be applied inside a table cell.');
-  }
-
-  // Heading text normalization happens in memory and is written at most once.
-  if (styleName !== 'NORMAL') {
-    const text = paragraph.editAsText();
-    const original = text.getText();
-    const normalized = normalizeHeadingTextValue_(original);
-
-    if (normalized !== original) {
-      text.setText(normalized);
-    }
-  }
-
-  // Apply the actual Google Docs named style.
-  paragraph.setHeading(ctx.heading);
-
-  // Project rule: Normal + H1-H6 all align to the exact same left axis.
-  paragraph.setIndentStart(0);
-  paragraph.setIndentEnd(0);
-  paragraph.setIndentFirstLine(0);
-  paragraph.setAlignment(DocumentApp.HorizontalAlignment.LEFT);
-
-  const text = paragraph.editAsText();
-  if (!text || !text.getText().length) return;
-
-  // Reapply the named style's character attributes so direct formatting
-  // does not survive unexpectedly (e.g. Normal remaining bold).
-  if (ctx.textAttributes && Object.keys(ctx.textAttributes).length) {
-    text.setAttributes(ctx.textAttributes);
-  }
-
-  // Project rule: every Heading 1-6 is fully Bold and 10 pt, including
-  // manually typed numbering and the title text.
-  if (styleName !== 'NORMAL') {
-    text.setBold(true);
-    text.setFontSize(10);
-  }
+function applyNamedStyleToParagraph_(paragraph, styleName) {
+  paragraph.setHeading(getParagraphHeadingEnum_(styleName));
+  return paragraph;
 }
 
-function getNamedStyleContext_(styleName) {
+function getParagraphHeadingEnum_(styleName) {
   const map = {
     NORMAL: DocumentApp.ParagraphHeading.NORMAL,
     H1: DocumentApp.ParagraphHeading.HEADING1,
@@ -130,61 +91,18 @@ function getNamedStyleContext_(styleName) {
   };
 
   const heading = map[styleName];
+
   if (!heading) {
     throw new Error('Unknown style: ' + styleName);
   }
 
-  // One style read for the entire operation.
-  const styleAttributes = getActiveBody_().getHeadingAttributes(heading);
-
-  return {
-    heading: heading,
-    textAttributes: getNamedTextAttributes_(styleAttributes)
-  };
-}
-
-function getNamedTextAttributes_(attrs) {
-  const result = {};
-  const supported = [
-    DocumentApp.Attribute.FONT_FAMILY,
-    DocumentApp.Attribute.FONT_SIZE,
-    DocumentApp.Attribute.BOLD,
-    DocumentApp.Attribute.ITALIC,
-    DocumentApp.Attribute.UNDERLINE,
-    DocumentApp.Attribute.STRIKETHROUGH,
-    DocumentApp.Attribute.FOREGROUND_COLOR,
-    DocumentApp.Attribute.BACKGROUND_COLOR
-  ];
-
-  supported.forEach(attr => {
-    if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      result[attr] = attrs[attr];
-    }
-  });
-
-  return result;
-}
-
-function normalizeHeadingTextValue_(value) {
-  const source = String(value || '');
-  if (!source) return source;
-
-  let normalized = source.toLowerCase().replace(
-    /[A-Za-zÁÉÍÓÚÜÑÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÇ]/,
-    ch => ch.toUpperCase()
-  );
-
-  normalized = normalized.replace(
-    /^(\s*\d+(?:\.\d+)*\.?)[\t ]+/,
-    '$1 '
-  );
-
-  return normalized;
+  return heading;
 }
 
 function getCurrentParagraph_() {
   const doc = DocumentApp.getActiveDocument();
   const cursor = doc.getCursor();
+
   if (!cursor) return null;
 
   let el = cursor.getElement();
@@ -212,6 +130,11 @@ function getStyleTargetParagraphs_() {
   return current ? [current] : [];
 }
 
+/**
+ * Fast inclusive selection collector.
+ * For a normal same-container selection, every paragraph/list item from the
+ * first selected paragraph to the last is returned, including blank paragraphs.
+ */
 function getSelectedParagraphsIncludingGaps_() {
   const selection = DocumentApp.getActiveDocument().getSelection();
   if (!selection) return [];
@@ -219,26 +142,42 @@ function getSelectedParagraphsIncludingGaps_() {
   const ranges = selection.getRangeElements();
   if (!ranges.length) return [];
 
-  const touched = [];
-
-  ranges.forEach(re => {
-    let el = re.getElement();
+  // Fast path for the very common one-range / one-paragraph selection.
+  if (ranges.length === 1) {
+    let one = ranges[0].getElement();
 
     while (
-      el &&
-      el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-      el.getType() !== DocumentApp.ElementType.LIST_ITEM
+      one &&
+      one.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+      one.getType() !== DocumentApp.ElementType.LIST_ITEM
     ) {
-      el = el.getParent();
+      one = one.getParent();
     }
 
-    if (el) touched.push(el);
-  });
+    return one ? [one] : [];
+  }
 
-  if (!touched.length) return [];
+  let first = ranges[0].getElement();
+  let last = ranges[ranges.length - 1].getElement();
 
-  const first = touched[0];
-  const last = touched[touched.length - 1];
+  while (
+    first &&
+    first.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+    first.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    first = first.getParent();
+  }
+
+  while (
+    last &&
+    last.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+    last.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    last = last.getParent();
+  }
+
+  if (!first || !last) return [];
+
   const parent = first.getParent();
 
   try {
@@ -262,6 +201,7 @@ function getSelectedParagraphsIncludingGaps_() {
 
     return result;
   } catch (e) {
+    // Cross-container selection fallback.
     return getSelectedParagraphs_();
   }
 }

@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.9
+# Docs Assistant v0.9.0
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -415,3 +415,17 @@ It is not written into the document or source code.
 - Normal text reapplies the document Normal style's character attributes so inherited bold/direct formatting is cleared.
 - Heading 1–6 reapplies named-style character attributes, then forces the complete line to Bold + 10 pt.
 - Table cells are protected from Normal/Heading buttons.
+
+
+## v0.9.0 — Named styles simplified to native Google Docs behavior
+- Normal text and Heading 1–6 now do exactly one formatting operation per paragraph: `paragraph.setHeading(...)`.
+- No `getHeadingAttributes()` calls.
+- No forced font size, bold, capitalization, indentation, alignment, or text attributes.
+- The current document Named Style is therefore the source of truth, exactly as configured in Google Docs.
+- Restored `applyNamedStyleToParagraph_()` as the single low-level formatter used throughout the Add-on. This also fixes callers in Lists, Notes/Captions, Gemini Smart Format, etc. that still depended on that helper.
+- The style buttons call one server method (`applyNamedStyle`) and the server decides whether the current target is a cursor paragraph or a selection. This avoids relying on stale sidebar selection state.
+- Selection formatting includes blank paragraphs between the first and last selected paragraph.
+- Timing diagnostics now report:
+  - server execution time;
+  - total client-observed time.
+  If server time is small but total time is large, the remaining delay is Apps Script / `google.script.run` startup or transport latency, not the formatting function itself.
