@@ -1,4 +1,4 @@
-# Docs Assistant v0.8.6
+# Docs Assistant v0.8.8
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -369,3 +369,31 @@ It is not written into the document or source code.
   - native bullet listId/glyph are preserved;
   - Continue previous bullet detection uses the correct indentation for body vs table-cell context;
   - Full Smart Format uses the same table-aware bullet indentation.
+
+
+## v0.8.7 — Fast paragraph formatting architecture
+- Rebuilt Normal/Heading formatting around two explicit routes:
+  - `applyNamedStyleToCurrentParagraph(styleName)` for one cursor paragraph.
+  - `applyNamedStyleToSelectedParagraphs(styleName)` for a selected paragraph range.
+- Both routes use the same low-level `formatSingleParagraph_()` function.
+- Multi-paragraph formatting now includes blank paragraphs between the first and last selected paragraph.
+- `applyNamedStyle(styleName)` automatically dispatches to single-paragraph vs range mode.
+- Major reduction in DocumentApp mutations:
+  - one `setHeading()`;
+  - one paragraph `setAttributes()`;
+  - one text `setAttributes()`;
+  - optional `setText()` only when a heading actually needs sentence-case/number-spacing normalization.
+- H1/H2/H3 indentation is folded into the single paragraph-attributes call rather than four separate setters.
+- Heading sentence case + numeric-prefix spacing are calculated in memory and written at most once.
+- Spacing/Keep-with-next now use the same cursor-or-inclusive-selection paragraph engine.
+- Sidebar status now reports Apps Script server execution time for style buttons, helping distinguish code execution from Apps Script/network startup latency.
+
+
+## v0.8.8 — Uniform left alignment
+- Normal text and Heading 1–6 now use the same paragraph geometry:
+  - Left indent: 0 in
+  - Right indent: 0 in
+  - Special indent: None
+  - Alignment: Left
+- Removed the previous H1/H2/H3 custom left indents (-0.12 / 0 / 0.19 in).
+- The alignment override is merged into the existing paragraph `setAttributes()` call, so it adds no extra DocumentApp mutations.

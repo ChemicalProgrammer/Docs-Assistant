@@ -6,17 +6,122 @@ function applyNamedStyle(styleName) {
     throw new Error('Select text or place the cursor in the paragraph you want to format.');
   }
 
-  // Build once per operation. The previous implementation retrieved the
-  // active body and named-style attributes again for every paragraph.
   const context = getNamedStyleContext_(styleName);
+  const lookupMs = Date.now() - started;
 
-  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName, context));
+  if (targets.length === 1) {
+    formatSingleParagraph_(targets[0], styleName, context);
+  } else {
+    formatParagraphRange_(targets, styleName, context);
+  }
 
   return {
     ok: true,
     paragraphs: targets.length,
+    mode: targets.length === 1 ? 'single' : 'range',
+    lookupMs: lookupMs,
     elapsedMs: Date.now() - started
   };
+}
+
+/**
+ * Public single-paragraph route.
+ * Useful for cursor-only formatting and for direct testing/benchmarking.
+ */
+function applyNamedStyleToCurrentParagraph(styleName) {
+  const started = Date.now();
+  const target = getCurrentParagraph_();
+
+  if (!target) {
+    throw new Error('Place the cursor in the paragraph you want to format.');
+  }
+
+  const context = getNamedStyleContext_(styleName);
+  formatSingleParagraph_(target, styleName, context);
+
+  return {
+    ok: true,
+    paragraphs: 1,
+    mode: 'single',
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Public multi-paragraph route.
+ * It includes blank paragraphs between the first and last selected paragraph.
+ * Every paragraph is formatted by the same single-paragraph function.
+ */
+function applyNamedStyleToSelectedParagraphs(styleName) {
+  const started = Date.now();
+  const targets = getSelectedParagraphsIncludingGaps_();
+
+  if (!targets.length) {
+    throw new Error('Select one or more paragraphs first.');
+  }
+
+  const context = getNamedStyleContext_(styleName);
+  formatParagraphRange_(targets, styleName, context);
+
+  return {
+    ok: true,
+    paragraphs: targets.length,
+    mode: 'range',
+    elapsedMs: Date.now() - started
+  };
+}
+
+function formatParagraphRange_(paragraphs, styleName, context) {
+  paragraphs.forEach(p => formatSingleParagraph_(p, styleName, context));
+}
+
+/**
+ * FAST single-paragraph formatter.
+ *
+ * Design goal: minimize DocumentApp mutations.
+ * Previous versions could execute roughly 8–12 formatting mutations for one
+ * heading. This route uses:
+ *   1) setHeading()
+ *   2) one paragraph setAttributes()
+ *   3) one text setAttributes()
+ * plus one setText() only when heading text actually needs normalization.
+ */
+function formatSingleParagraph_(paragraph, styleName, context) {
+  const ctx = context || getNamedStyleContext_(styleName);
+  let text = null;
+  let value = '';
+
+  // Read/edit text only when needed.
+  if (styleName !== 'NORMAL') {
+    text = paragraph.editAsText();
+    value = text.getText();
+
+    const normalized = normalizeHeadingTextValue_(value);
+    if (normalized !== value) {
+      text.setText(normalized);
+    }
+  }
+
+  // Named heading identity.
+  paragraph.setHeading(ctx.heading);
+
+  // One paragraph-level mutation. This contains the document style's
+  // paragraph properties plus our required H1/H2/H3 indentation overrides.
+  if (ctx.paragraphAttributes && Object.keys(ctx.paragraphAttributes).length) {
+    paragraph.setAttributes(ctx.paragraphAttributes);
+  }
+
+  // One character-level mutation for the whole paragraph.
+  // For headings this includes Bold + 10 pt for BOTH numbering and title.
+  if (!text) text = paragraph.editAsText();
+
+  if (
+    text.getText().length &&
+    ctx.textAttributes &&
+    Object.keys(ctx.textAttributes).length
+  ) {
+    text.setAttributes(ctx.textAttributes);
+  }
 }
 
 function getNamedStyleContext_(styleName) {
@@ -33,27 +138,56 @@ function getNamedStyleContext_(styleName) {
   const heading = map[styleName];
   if (!heading) throw new Error('Unknown style.');
 
+  // One named-style lookup for the ENTIRE user operation.
   const styleAttributes = getActiveBody_().getHeadingAttributes(heading);
+  const paragraphAttributes = getNamedParagraphAttributes_(styleAttributes);
+  const textAttributes = getNamedTextAttributes_(styleAttributes);
 
-  // Project rule for ALL Heading buttons:
-  // the complete heading — including a manual or native list number —
-  // must be Bold and 10 pt.
-  //
-  // We keep the rest of the document named-style attributes intact.
   if (styleName !== 'NORMAL') {
-    styleAttributes[DocumentApp.Attribute.BOLD] = true;
-    styleAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
+    // All Heading 1–6: entire line, including numbering, Bold / 10 pt.
+    textAttributes[DocumentApp.Attribute.BOLD] = true;
+    textAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
+
+    // Paragraph-level attributes help native numbering inherit the same style.
+    paragraphAttributes[DocumentApp.Attribute.BOLD] = true;
+    paragraphAttributes[DocumentApp.Attribute.FONT_SIZE] = 10;
   }
+
+  applyHeadingIndentOverridesToAttributes_(paragraphAttributes, styleName);
 
   return {
     heading: heading,
-    styleAttributes: styleAttributes,
-    textAttributes: getNamedTextAttributes_(styleAttributes)
+    paragraphAttributes: paragraphAttributes,
+    textAttributes: textAttributes
   };
 }
 
+function getNamedParagraphAttributes_(attrs) {
+  const result = {};
+  const supported = [
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
+    DocumentApp.Attribute.LINE_SPACING,
+    DocumentApp.Attribute.SPACING_BEFORE,
+    DocumentApp.Attribute.SPACING_AFTER,
+    DocumentApp.Attribute.INDENT_START,
+    DocumentApp.Attribute.INDENT_END,
+    DocumentApp.Attribute.INDENT_FIRST_LINE,
+    DocumentApp.Attribute.KEEP_WITH_NEXT,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.FONT_SIZE
+  ];
+
+  supported.forEach(attr => {
+    if (attrs[attr] !== undefined && attrs[attr] !== null) {
+      result[attr] = attrs[attr];
+    }
+  });
+
+  return result;
+}
+
 function getNamedTextAttributes_(attrs) {
-  const textAttrs = {};
+  const result = {};
   const supported = [
     DocumentApp.Attribute.FONT_FAMILY,
     DocumentApp.Attribute.FONT_SIZE,
@@ -67,61 +201,71 @@ function getNamedTextAttributes_(attrs) {
 
   supported.forEach(attr => {
     if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      textAttrs[attr] = attrs[attr];
+      result[attr] = attrs[attr];
     }
   });
 
-  return textAttrs;
+  return result;
 }
 
-function applyNamedStyleToParagraph_(p, styleName, context) {
-  const ctx = context || getNamedStyleContext_(styleName);
+function applyHeadingIndentOverridesToAttributes_(attrs, styleName) {
+  // Project alignment rule:
+  // Normal text + Heading 1–6 must all start on the exact same left axis.
+  //
+  // Left indent: 0
+  // Right indent: 0
+  // Special indent: None
+  // Alignment: Left
+  //
+  // These values are folded into the existing paragraph setAttributes()
+  // call, so this does not add extra DocumentApp mutations.
 
-  if (styleName !== 'NORMAL') {
-    const currentText = p.getText();
-    const converted = sentenceCaseHeading_(currentText);
+  const textStyles = ['NORMAL', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6'];
+  if (textStyles.indexOf(styleName) === -1) return;
 
-    if (converted !== currentText) {
-      p.editAsText().setText(converted);
-    }
-  }
-
-  p.setAttributes(ctx.styleAttributes);
-  p.setHeading(ctx.heading);
-
-  applyHeadingIndentation_(p, styleName);
-
-  if (styleName !== 'NORMAL') {
-    normalizeHeadingNumberSpacing_(p);
-  }
-
-  applyNamedTextAttributes_(p, ctx.textAttributes, true);
-
-  if (styleName !== 'NORMAL') {
-    enforceHeadingBold10_(p);
-  }
+  attrs[DocumentApp.Attribute.INDENT_START] = 0;
+  attrs[DocumentApp.Attribute.INDENT_END] = 0;
+  attrs[DocumentApp.Attribute.INDENT_FIRST_LINE] = 0;
+  attrs[DocumentApp.Attribute.HORIZONTAL_ALIGNMENT] =
+    DocumentApp.HorizontalAlignment.LEFT;
 }
 
-function enforceHeadingBold10_(paragraph) {
-  // Direct paragraph attributes are important for native numbered headings:
-  // they help the list-number glyph inherit the same Bold / 10 pt formatting.
-  const attrs = {};
-  attrs[DocumentApp.Attribute.BOLD] = true;
-  attrs[DocumentApp.Attribute.FONT_SIZE] = 10;
+function normalizeHeadingTextValue_(value) {
+  const source = String(value || '');
+  if (!source) return source;
 
-  try {
-    paragraph.setAttributes(attrs);
-  } catch (e) {}
+  // Sentence case in memory: no intermediate DocumentApp write.
+  let normalized = source.toLowerCase().replace(
+    /[A-Za-zÁÉÍÓÚÜÑÀÈÌÒÙÂÊÎÔÛÄËÏÖÜÇ]/,
+    ch => ch.toUpperCase()
+  );
 
-  // Explicitly style every text character too, including manually typed
-  // section numbers such as "7.3.3".
-  try {
-    const text = paragraph.editAsText();
-    if (text && text.getText().length) {
-      text.setBold(true);
-      text.setFontSize(10);
-    }
-  } catch (e) {}
+  // Normalize the space after a manual numeric section identifier in the
+  // SAME in-memory pass.
+  normalized = normalized.replace(
+    /^(\s*\d+(?:\.\d+)*\.?)[\t ]+/,
+    '$1 '
+  );
+
+  return normalized;
+}
+
+function getCurrentParagraph_() {
+  const doc = DocumentApp.getActiveDocument();
+  const cursor = doc.getCursor();
+  if (!cursor) return null;
+
+  let el = cursor.getElement();
+
+  while (
+    el &&
+    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+    el.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    el = el.getParent();
+  }
+
+  return el || null;
 }
 
 function applyHeadingIndentation_(paragraph, styleName) {
@@ -171,54 +315,78 @@ function getStyleTargetParagraphs_() {
   const doc = DocumentApp.getActiveDocument();
   const selection = doc.getSelection();
 
-  // If there is a selection, apply the style to every paragraph touched
-  // by the selection, exactly as before.
   if (selection) {
-    return getSelectedParagraphs_();
+    return getSelectedParagraphsIncludingGaps_();
   }
 
-  // If there is no selection, the paragraph/list item containing the cursor
-  // is the target. The user does not need to select the heading text.
-  const cursor = doc.getCursor();
-  if (!cursor) return [];
-
-  let el = cursor.getElement();
-  while (
-    el &&
-    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-    el.getType() !== DocumentApp.ElementType.LIST_ITEM
-  ) {
-    el = el.getParent();
-  }
-
-  return el ? [el] : [];
+  const current = getCurrentParagraph_();
+  return current ? [current] : [];
 }
 
-function getActiveDocumentTab_() {
-  const doc = DocumentApp.getActiveDocument();
+/**
+ * Returns every Paragraph/ListItem from the first selected paragraph through
+ * the last selected paragraph, including blank paragraphs in between.
+ *
+ * For the common case (same Body or same TableCell parent), this avoids the
+ * old RangeElement-by-RangeElement deduplication and gives deterministic
+ * coverage of paragraph spacing/gaps.
+ */
+function getSelectedParagraphsIncludingGaps_() {
+  const selection = DocumentApp.getActiveDocument().getSelection();
+  if (!selection) return [];
+
+  const ranges = selection.getRangeElements();
+  if (!ranges.length) return [];
+
+  const touched = [];
+
+  ranges.forEach(re => {
+    let el = re.getElement();
+
+    while (
+      el &&
+      el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
+      el.getType() !== DocumentApp.ElementType.LIST_ITEM
+    ) {
+      el = el.getParent();
+    }
+
+    if (el) touched.push(el);
+  });
+
+  if (!touched.length) return [];
+
+  // Fast/common path: first and last paragraph have the same logical parent.
+  const first = touched[0];
+  const last = touched[touched.length - 1];
+  const firstParent = first.getParent();
+  const lastParent = last.getParent();
+
   try {
-    return doc.getActiveTab().asDocumentTab();
+    const firstIndex = firstParent.getChildIndex(first);
+    const lastIndex = firstParent.getChildIndex(last);
+
+    // If last is not a child of firstParent, getChildIndex throws.
+    const minIndex = Math.min(firstIndex, lastIndex);
+    const maxIndex = Math.max(firstIndex, lastIndex);
+    const result = [];
+
+    for (let i = minIndex; i <= maxIndex; i++) {
+      const child = firstParent.getChild(i);
+      const type = child.getType();
+
+      if (
+        type === DocumentApp.ElementType.PARAGRAPH ||
+        type === DocumentApp.ElementType.LIST_ITEM
+      ) {
+        result.push(child);
+      }
+    }
+
+    return result;
   } catch (e) {
-    return null;
-  }
-}
-
-function getActiveBody_() {
-  const doc = DocumentApp.getActiveDocument();
-  const tab = getActiveDocumentTab_();
-
-  if (tab) return tab.getBody();
-  return doc.getBody();
-}
-
-function applyNamedTextAttributes_(paragraph, attrs, alreadyFiltered) {
-  const text = paragraph.editAsText();
-  if (!text || text.getText().length === 0) return;
-
-  const textAttrs = alreadyFiltered ? attrs : getNamedTextAttributes_(attrs);
-
-  if (textAttrs && Object.keys(textAttrs).length) {
-    text.setAttributes(textAttrs);
+    // Cross-container selection fallback (e.g. multiple table cells).
+    return getSelectedParagraphs_();
   }
 }
 
@@ -813,8 +981,10 @@ function getSelectedParagraphs_() {
 }
 
 function eachSelectedParagraph_(fn) {
-  const paragraphs = getSelectedParagraphs_();
-  if (!paragraphs.length) throw new Error('Select one or more paragraphs first.');
+  const paragraphs = getStyleTargetParagraphs_();
+  if (!paragraphs.length) {
+    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
+  }
   paragraphs.forEach(fn);
 }
 

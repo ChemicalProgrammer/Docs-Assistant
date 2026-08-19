@@ -97,7 +97,19 @@ function fullSmartFormat(e){
    .withFailureHandler(fail)
    .smartFormatSelection();
 }
-function styleText(s,e){runServer(e.currentTarget,'…','applyNamedStyle',[s],'Style applied')}
+function styleText(s,e){
+ if(!beginTask(e.currentTarget,'…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     r=r||{};
+     const count=r.paragraphs||1;
+     const ms=Number(r.elapsedMs||0);
+     const mode=r.mode==='single'?'single paragraph':`${count} paragraphs`;
+     endTask(true,`Style applied · ${mode}${ms?` · server ${ms} ms`:''}`);
+   })
+   .withFailureHandler(fail)
+   .applyNamedStyle(s);
+}
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
