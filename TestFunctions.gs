@@ -4,7 +4,73 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testRestartExactLetterList_();
+  return testCopyNativeLetterListItem_();
+}
+
+function testCopyNativeLetterListItem_() {
+  const started = Date.now();
+  const document = DocumentApp.getActiveDocument();
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'Place the cursor inside a native a) list item.'
+    );
+  }
+
+  let source = cursor.getElement();
+
+  while (
+    source &&
+    source.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    source = source.getParent();
+  }
+
+  if (
+    !source ||
+    source.getType() !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    throw new Error(
+      'The cursor is not inside a native Google Docs list item.'
+    );
+  }
+
+  const parent = source.getParent();
+  const sourceIndex = parent.getChildIndex(source);
+  const sourceListId = source.getListId();
+  const sourceGlyphType = String(source.getGlyphType());
+  const sourceNestingLevel = source.getNestingLevel();
+
+  const detachedCopy = source.copy();
+  detachedCopy.setText('NATIVE INCISO COPY TEST');
+
+  const inserted = parent.insertListItem(
+    sourceIndex + 1,
+    detachedCopy
+  );
+
+  inserted
+    .setIndentFirstLine(18) // posición del marcador
+    .setIndentStart(36)     // texto a 0.50 in
+    .setIndentEnd(0);
+
+  const insertedListId = inserted.getListId();
+
+  document.saveAndClose();
+
+  return {
+    testId: 'TEST-016-NATIVE-INCISO-COPY',
+    ok: true,
+    sourceListId: sourceListId,
+    insertedListId: insertedListId,
+    sameListId: sourceListId === insertedListId,
+    sourceGlyphType: sourceGlyphType,
+    insertedGlyphType: String(inserted.getGlyphType()),
+    sourceNestingLevel: sourceNestingLevel,
+    insertedNestingLevel: inserted.getNestingLevel(),
+    elapsedMs: Date.now() - started
+  };
 }
 
 function testRestartExactLetterList_() {
