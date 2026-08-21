@@ -4,7 +4,145 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testCalculateApiRangeLocally_();
+  return testLocateWithTemporaryNamedRange_();
+}
+
+/**
+ * TEST-006
+ * Obtiene los índices API del párrafo actual usando un NamedRange temporal.
+ *
+ * No modifica visualmente el formato.
+ * Siempre intenta eliminar el marcador al terminar.
+ */
+function testLocateWithTemporaryNamedRange_() {
+  const started = Date.now();
+
+  const document = DocumentApp.getActiveDocument();
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'Coloca el cursor dentro de un párrafo, sin seleccionar texto.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error('No se pudo localizar el párrafo actual.');
+  }
+
+  const documentId = document.getId();
+  const markerName =
+    'DOCS_ASSISTANT_TEST_' +
+    Utilities.getUuid().replace(/-/g, '');
+
+  const setupStarted = Date.now();
+
+  const range = document
+    .newRange()
+    .addElement(paragraph)
+    .build();
+
+  const namedRange = document.addNamedRange(markerName, range);
+  const namedRangeId = namedRange.getId();
+
+  const markerSetupMs = Date.now() - setupStarted;
+
+  const saveStarted = Date.now();
+  document.saveAndClose();
+  const saveMs = Date.now() - saveStarted;
+
+  let apiReadMs = 0;
+  let cleanupMs = 0;
+
+  try {
+    const apiStarted = Date.now();
+
+    const apiDocument = Docs.Documents.get(documentId, {
+      fields: 'namedRanges'
+    });
+
+    apiReadMs = Date.now() - apiStarted;
+
+    const group =
+      apiDocument.namedRanges &&
+      apiDocument.namedRanges[markerName];
+
+    const candidates =
+      group && group.namedRanges
+        ? group.namedRanges
+        : [];
+
+    const match =
+      candidates.find(function (item) {
+        return item.namedRangeId === namedRangeId;
+      }) || candidates[0];
+
+    const apiRange =
+      match &&
+      match.ranges &&
+      match.ranges.length
+        ? match.ranges[0]
+        : null;
+
+    if (!apiRange) {
+      throw new Error(
+        'La API no devolvió el NamedRange temporal.'
+      );
+    }
+
+    const cleanupStarted = Date.now();
+
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            deleteNamedRange: {
+              namedRangeId: namedRangeId
+            }
+          }
+        ]
+      },
+      documentId
+    );
+
+    cleanupMs = Date.now() - cleanupStarted;
+
+    return {
+      ok: true,
+      testId: 'TEST-006-TEMPORARY-NAMED-RANGE',
+      startIndex: apiRange.startIndex,
+      endIndex: apiRange.endIndex,
+      targetLength: paragraph.getText().length,
+      markerSetupMs: markerSetupMs,
+      saveMs: saveMs,
+      apiReadMs: apiReadMs,
+      cleanupMs: cleanupMs,
+      elapsedMs: Date.now() - started
+    };
+
+  } catch (error) {
+    // Intentar eliminar el marcador aunque falle la lectura.
+    try {
+      Docs.Documents.batchUpdate(
+        {
+          requests: [
+            {
+              deleteNamedRange: {
+                namedRangeId: namedRangeId
+              }
+            }
+          ]
+        },
+        documentId
+      );
+    } catch (cleanupError) {
+      // No ocultar el error original.
+    }
+
+    throw error;
+  }
 }
 
 /**
