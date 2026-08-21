@@ -196,7 +196,69 @@ function applyIndentationUi(e){
    .withFailureHandler(fail)
    .applyIndentation(left,right,special,by);
 }
+function formatSelectedStyles(e) {
+  if (
+    !beginTask(
+      e.currentTarget,
+      'Formatting…'
+    )
+  ) {
+    return;
+  }
 
+  const totalStarted = performance.now();
+
+  google.script.run
+    .withSuccessHandler(function (result) {
+      result = result || {};
+
+      const parts = [];
+
+      if (result.headings) {
+        parts.push(
+          result.headings +
+          ' heading' +
+          (result.headings === 1 ? '' : 's')
+        );
+      }
+
+      if (result.normal) {
+        parts.push(
+          result.normal +
+          ' normal'
+        );
+      }
+
+      if (result.blank) {
+        parts.push(
+          result.blank +
+          ' blank'
+        );
+      }
+
+      const totalMs = Math.round(
+        performance.now() - totalStarted
+      );
+
+      const serverMs = Number(
+        result.elapsedMs || 0
+      );
+
+      endTask(
+        true,
+        'Selection formatted · ' +
+        parts.join(' · ') +
+        ' · server ' +
+        serverMs +
+        ' ms · total ' +
+        totalMs +
+        ' ms',
+        true
+      );
+    })
+    .withFailureHandler(fail)
+    .formatSelectedNamedStyles();
+}
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
