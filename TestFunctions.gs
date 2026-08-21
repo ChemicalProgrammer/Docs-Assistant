@@ -4,7 +4,319 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testApplyExactLetterList_();
+  return testContinueExactLetterList_();
+}
+
+/**
+ * TEST-014
+ *
+ * Busca el inciso anterior y continúa desde el siguiente.
+ *
+ * Ejemplo:
+ * c) Septiembre
+ * d) Octubre
+ * e) Noviembre
+ */
+function testContinueExactLetterList_() {
+  const started = Date.now();
+
+  const document =
+    DocumentApp.getActiveDocument();
+
+  const context =
+    testGetParagraphsFromCurrentContext_(
+      document
+    );
+
+  const targets = context.paragraphs;
+
+  if (!targets.length) {
+    throw new Error(
+      'Selecciona las líneas nuevas que deben continuar la numeración.'
+    );
+  }
+
+  const searchStarted = Date.now();
+
+  const previous =
+    testFindPreviousManualListOrdinal_(
+      targets[0],
+      'LETTER'
+    );
+
+  const searchMs =
+    Date.now() - searchStarted;
+
+  /*
+   * Si encuentra c), comienza en d).
+   * Si no encuentra una lista anterior, comienza en a).
+   */
+  const initialOrdinal =
+    previous.ordinal > 0
+      ? previous.ordinal + 1
+      : 1;
+
+  const updateStarted = Date.now();
+
+  const result =
+    testCreateExactManualList_(
+      targets,
+      'LETTER',
+      initialOrdinal
+    );
+
+  const updateMs =
+    Date.now() - updateStarted;
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId:
+      'TEST-014-CONTINUE-LETTER-LIST',
+
+    requestedContinue: true,
+    previousFound:
+      previous.ordinal > 0,
+
+    previousOrdinal:
+      previous.ordinal,
+
+    previousText:
+      previous.text,
+
+    siblingsScanned:
+      previous.siblingsScanned,
+
+    initialOrdinal:
+      initialOrdinal,
+
+    nextOrdinal:
+      result.nextOrdinal,
+
+    paragraphsCreated:
+      result.paragraphs.length,
+
+    items: result.paragraphs.map(
+      function (paragraph, index) {
+        return {
+          index: index,
+          text: paragraph.getText(),
+          indentStart:
+            paragraph.getIndentStart(),
+          indentFirstLine:
+            paragraph.getIndentFirstLine(),
+          indentEnd:
+            paragraph.getIndentEnd()
+        };
+      }
+    ),
+
+    searchMs: searchMs,
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Busca hacia atrás el elemento más cercano que tenga
+ * un prefijo compatible.
+ */
+function testFindPreviousManualListOrdinal_(
+  target,
+  type
+) {
+  const parent = target.getParent();
+
+  if (!parent) {
+    return {
+      ordinal: 0,
+      text: '',
+      siblingsScanned: 0
+    };
+  }
+
+  const targetIndex =
+    parent.getChildIndex(target);
+
+  let siblingsScanned = 0;
+
+  for (
+    let index = targetIndex - 1;
+    index >= 0;
+    index--
+  ) {
+    const child = parent.getChild(index);
+
+    const childType = child.getType();
+
+    if (
+      childType !==
+        DocumentApp.ElementType.PARAGRAPH &&
+      childType !==
+        DocumentApp.ElementType.LIST_ITEM
+    ) {
+      continue;
+    }
+
+    siblingsScanned++;
+
+    const logicalLines = String(
+      child.getText() || ''
+    ).split(/\r\n|\r|\n/);
+
+    /*
+     * Revisar desde la última línea hacia la primera.
+     */
+    for (
+      let lineIndex =
+        logicalLines.length - 1;
+      lineIndex >= 0;
+      lineIndex--
+    ) {
+      const line =
+        logicalLines[lineIndex];
+
+      const ordinal =
+        testReadManualListOrdinal_(
+          line,
+          type
+        );
+
+      if (ordinal > 0) {
+        return {
+          ordinal: ordinal,
+          text: line,
+          siblingsScanned:
+            siblingsScanned
+        };
+      }
+    }
+  }
+
+  return {
+    ordinal: 0,
+    text: '',
+    siblingsScanned:
+      siblingsScanned
+  };
+}
+
+/**
+ * Lee el ordinal de un prefijo administrado
+ * por el add-on.
+ */
+function testReadManualListOrdinal_(
+  value,
+  type
+) {
+  const text = String(value || '');
+
+  if (type === 'NUMBER') {
+    const match = text.match(
+      /^\s*(\d+)\.\s+/
+    );
+
+    return match
+      ? Number(match[1])
+      : 0;
+  }
+
+  if (type === 'LETTER') {
+    const match = text.match(
+      /^\s*([A-Za-z]+)\)\s+/
+    );
+
+    return match
+      ? testLettersToNumber_(
+          match[1]
+        )
+      : 0;
+  }
+
+  if (type === 'ROMAN') {
+    const match = text.match(
+      /^\s*([ivxlcdm]+)\.\s+/i
+    );
+
+    return match
+      ? testRomanToNumber_(
+          match[1]
+        )
+      : 0;
+  }
+
+  return 0;
+}
+
+function testLettersToNumber_(letters) {
+  const value = String(
+    letters || ''
+  ).toLowerCase();
+
+  let result = 0;
+
+  for (
+    let index = 0;
+    index < value.length;
+    index++
+  ) {
+    const code =
+      value.charCodeAt(index) - 96;
+
+    if (code < 1 || code > 26) {
+      return 0;
+    }
+
+    result =
+      result * 26 +
+      code;
+  }
+
+  return result;
+}
+
+function testRomanToNumber_(roman) {
+  const value = String(
+    roman || ''
+  ).toUpperCase();
+
+  const values = {
+    I: 1,
+    V: 5,
+    X: 10,
+    L: 50,
+    C: 100,
+    D: 500,
+    M: 1000
+  };
+
+  let total = 0;
+  let previous = 0;
+
+  for (
+    let index = value.length - 1;
+    index >= 0;
+    index--
+  ) {
+    const current =
+      values[value[index]] || 0;
+
+    if (!current) {
+      return 0;
+    }
+
+    if (current < previous) {
+      total -= current;
+    } else {
+      total += current;
+      previous = current;
+    }
+  }
+
+  return total;
 }
 
 /**
