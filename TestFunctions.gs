@@ -4,7 +4,284 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testConfirmMinimalH4Reset_();
+  return testApplyStyleToCurrentContext_('HEADING4');
+}
+
+/**
+ * TEST-011
+ *
+ * Aplica un estilo nombrado a todos los párrafos tocados
+ * por la selección.
+ *
+ * Si no existe selección, utiliza el párrafo del cursor.
+ */
+function testApplyStyleToCurrentContext_(styleName) {
+  const started = Date.now();
+  const document = DocumentApp.getActiveDocument();
+
+  const targetStyle =
+    testResolveParagraphHeading_(styleName);
+
+  const context =
+    testGetParagraphsFromCurrentContext_(document);
+
+  if (!context.paragraphs.length) {
+    throw new Error(
+      'No se encontraron párrafos en la selección o el cursor.'
+    );
+  }
+
+  const updateStarted = Date.now();
+  const results = [];
+
+  context.paragraphs.forEach(function (
+    paragraph,
+    index
+  ) {
+    const result =
+      testClearOverridesAndApplyStyle_(
+        paragraph,
+        targetStyle
+      );
+
+    result.index = index;
+    results.push(result);
+  });
+
+  const updateMs = Date.now() - updateStarted;
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId: 'TEST-011-MULTI-PARAGRAPH-STYLE',
+    requestedStyle: styleName,
+    contextType: context.contextType,
+    paragraphsApplied: context.paragraphs.length,
+    results: results,
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Elimina los overrides sin cambiar el contenido
+ * y aplica el estilo nombrado solicitado.
+ */
+function testClearOverridesAndApplyStyle_(
+  paragraph,
+  targetStyle
+) {
+  const before = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine:
+      paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  const resetAttributes =
+    testBuildOverrideResetAttributes_();
+
+  /*
+   * No se modifica el texto del párrafo.
+   * Los tabuladores y espacios reales se conservan.
+   */
+  paragraph.setAttributes(resetAttributes);
+  paragraph.setHeading(targetStyle);
+
+  const after = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine:
+      paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  return {
+    before: before,
+    after: after,
+    textLength: paragraph.getText().length
+  };
+}
+
+/**
+ * Atributos que se borran para recuperar la herencia
+ * del estilo nombrado.
+ *
+ * LINK_URL no se incluye para conservar hipervínculos.
+ * LIST_ID y GLYPH_TYPE tampoco se modifican.
+ */
+function testBuildOverrideResetAttributes_() {
+  const resetAttributes = {};
+
+  const attributesToReset = [
+    DocumentApp.Attribute.FONT_FAMILY,
+    DocumentApp.Attribute.FONT_SIZE,
+    DocumentApp.Attribute.FOREGROUND_COLOR,
+    DocumentApp.Attribute.BACKGROUND_COLOR,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.ITALIC,
+    DocumentApp.Attribute.UNDERLINE,
+    DocumentApp.Attribute.STRIKETHROUGH,
+
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
+    DocumentApp.Attribute.INDENT_START,
+    DocumentApp.Attribute.INDENT_END,
+    DocumentApp.Attribute.INDENT_FIRST_LINE,
+    DocumentApp.Attribute.LINE_SPACING,
+    DocumentApp.Attribute.SPACING_BEFORE,
+    DocumentApp.Attribute.SPACING_AFTER
+  ];
+
+  attributesToReset.forEach(function (attribute) {
+    resetAttributes[attribute] = null;
+  });
+
+  return resetAttributes;
+}
+
+/**
+ * Obtiene una lista única de párrafos desde la selección.
+ * Si no hay selección, obtiene el párrafo del cursor.
+ */
+function testGetParagraphsFromCurrentContext_(
+  document
+) {
+  const selection = document.getSelection();
+
+  if (selection) {
+    const paragraphs = [];
+    const existingKeys = {};
+
+    selection
+      .getRangeElements()
+      .forEach(function (rangeElement) {
+        const paragraph = testFindParagraph_(
+          rangeElement.getElement()
+        );
+
+        if (!paragraph) {
+          return;
+        }
+
+        const paragraphKey =
+          testGetParagraphStructuralKey_(paragraph);
+
+        if (existingKeys[paragraphKey]) {
+          return;
+        }
+
+        existingKeys[paragraphKey] = true;
+        paragraphs.push(paragraph);
+      });
+
+    if (paragraphs.length) {
+      return {
+        contextType: 'SELECTION',
+        paragraphs: paragraphs
+      };
+    }
+  }
+
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    return {
+      contextType: 'NONE',
+      paragraphs: []
+    };
+  }
+
+  const cursorParagraph = testFindParagraph_(
+    cursor.getElement()
+  );
+
+  return {
+    contextType: 'CURSOR',
+    paragraphs: cursorParagraph
+      ? [cursorParagraph]
+      : []
+  };
+}
+
+/**
+ * Crea una clave estructural para evitar aplicar el
+ * formato varias veces al mismo párrafo.
+ */
+function testGetParagraphStructuralKey_(paragraph) {
+  const path = [];
+  let current = paragraph;
+
+  while (current) {
+    const parent = current.getParent();
+
+    if (
+      !parent ||
+      typeof parent.getChildIndex !== 'function'
+    ) {
+      break;
+    }
+
+    path.unshift(parent.getChildIndex(current));
+    current = parent;
+  }
+
+  return String(paragraph.getType()) +
+    ':' +
+    path.join('.');
+}
+
+/**
+ * Convierte el nombre del estilo al enum de DocumentApp.
+ */
+function testResolveParagraphHeading_(styleName) {
+  const styles = {
+    NORMAL:
+      DocumentApp.ParagraphHeading.NORMAL,
+
+    TITLE:
+      DocumentApp.ParagraphHeading.TITLE,
+
+    SUBTITLE:
+      DocumentApp.ParagraphHeading.SUBTITLE,
+
+    HEADING1:
+      DocumentApp.ParagraphHeading.HEADING1,
+
+    HEADING2:
+      DocumentApp.ParagraphHeading.HEADING2,
+
+    HEADING3:
+      DocumentApp.ParagraphHeading.HEADING3,
+
+    HEADING4:
+      DocumentApp.ParagraphHeading.HEADING4,
+
+    HEADING5:
+      DocumentApp.ParagraphHeading.HEADING5,
+
+    HEADING6:
+      DocumentApp.ParagraphHeading.HEADING6
+  };
+
+  const normalizedName = String(styleName)
+    .toUpperCase()
+    .replace(/[\s_-]+/g, '');
+
+  if (!styles[normalizedName]) {
+    throw new Error(
+      'Estilo no reconocido: ' + styleName
+    );
+  }
+
+  return styles[normalizedName];
 }
 
 /**
