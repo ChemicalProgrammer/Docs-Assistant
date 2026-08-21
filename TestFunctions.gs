@@ -1,82 +1,56 @@
-/*
- * Cambia solamente este valor:
- * LETTER | NUMBER | BULLET | ROMAN
- */
-var TEST_NATIVE_LIST_TYPE = 'LETTER';
-
-
 function runCurrentTest() {
-  return testApplyNativeIncisoFromPrevious_();
-}
-
-
-/**
- * Aplica el formato nativo a), b), c) utilizando la definición
- * de la lista latina nativa anterior más cercana.
- *
- * No intenta reiniciar ni decidir si debe continuar.
- */
-function testApplyNativeIncisoFromPrevious_() {
   var started = Date.now();
+  var doc = DocumentApp.getActiveDocument();
+  var cursor = doc.getCursor();
 
-  var targets = getNativeListTestTargets_();
-
-  if (!targets.length) {
+  if (!cursor) {
     throw new Error(
-      'Place the cursor in a line or select one or more lines.'
+      'Place only the cursor inside the line. Do not select text.'
     );
+  }
+
+  var source = findTestParagraph_(cursor.getElement());
+
+  if (!source) {
+    throw new Error('No paragraph was found at the cursor.');
   }
 
   /*
-   * Helper que ya agregamos para convertir Shift+Enter
-   * en líneas independientes.
+   * Si contiene Shift+Enter, extrae solamente la línea del cursor.
    */
-  targets = expandSoftBreakTargetsForNativeTest_(targets);
+  source = extractCursorLine_(source, cursor);
 
-  if (!targets.length) {
-    throw new Error('No target lines were found.');
-  }
+  var parent = source.getParent();
+  var sourceIndex = parent.getChildIndex(source);
+  var paragraphAttributes = source.getAttributes();
+  var content = source.getText();
 
-  var parent = targets[0].getParent();
-  var donor = findPreviousNativeInciso_(parent, targets[0]);
+  var textAttributes = {};
 
-  if (!donor) {
-    throw new Error(
-      'No previous native a) list was found in this container.'
-    );
-  }
-
-  var created = [];
-
-  targets.forEach(function(source) {
-    var sourceIndex;
-
+  if (content.length) {
     try {
-      sourceIndex = parent.getChildIndex(source);
-    } catch (error) {
-      throw new Error(
-        'The selected lines must belong to the same document container.'
-      );
-    }
+      textAttributes = source.editAsText().getAttributes();
+    } catch (error) {}
+  }
 
-    if (sourceIndex < 0) {
-      throw new Error(
-        'The selected lines must belong to the same document container.'
-      );
-    }
+  /*
+   * Aíslan la nueva lista de cualquier lista anterior o posterior.
+   */
+  var before = parent.insertParagraph(
+    sourceIndex,
+    '\uE510'
+  );
 
-    var content = source.getText();
-    var paragraphAttributes = source.getAttributes();
-    var textAttributes = {};
+  var after = parent.insertParagraph(
+    parent.getChildIndex(source) + 1,
+    '\uE511'
+  );
 
-    if (content.length) {
-      try {
-        textAttributes = source.editAsText().getAttributes();
-      } catch (error) {}
-    }
+  var item;
 
-    var item = parent.insertListItem(
-      sourceIndex,
+  try {
+    item = parent.insertListItem(
+      parent.getChildIndex(source),
       content
     );
 
@@ -91,185 +65,21 @@ function testApplyNativeIncisoFromPrevious_() {
     }
 
     /*
-     * Esta es la operación que ya había funcionado:
-     * copiar la definición nativa que muestra a).
+     * Nueva lista automática.
+     * No reutiliza listId y no busca listas anteriores.
      */
-    item.setListId(donor);
-    item.setNestingLevel(donor.getNestingLevel());
+    item.setGlyphType(
+      DocumentApp.GlyphType.LATIN_LOWER
+    );
+
+    item.setNestingLevel(0);
 
     // Left 0.25", Hanging 0.25", Right 0".
     item.setIndentFirstLine(18);
     item.setIndentStart(36);
     item.setIndentEnd(0);
 
-    created.push(item);
     source.removeFromParent();
-  });
-
-  return {
-    testId: 'TEST-NATIVE-INCISO-PROVEN-METHOD',
-    itemsApplied: created.length,
-    glyphType: String(created[0].getGlyphType()),
-    listId: created[0].getListId(),
-    nestingLevel: created[0].getNestingLevel(),
-    elapsedMs: Date.now() - started,
-    ok: true
-  };
-}
-
-
-/**
- * Busca hacia arriba el inciso latino automático más cercano.
- */
-function findPreviousNativeInciso_(parent, target) {
-  var targetIndex = parent.getChildIndex(target);
-
-  for (var i = targetIndex - 1; i >= 0; i--) {
-    var child = parent.getChild(i);
-
-    if (
-      child.getType() !==
-      DocumentApp.ElementType.LIST_ITEM
-    ) {
-      continue;
-    }
-
-    var item = child.asListItem();
-
-    try {
-      if (
-        item.getGlyphType() ===
-        DocumentApp.GlyphType.LATIN_LOWER
-      ) {
-        return item;
-      }
-    } catch (error) {}
-  }
-
-  return null;
-}
-
-
-function testNativeAutomaticList_(requestedType) {
-  var started = Date.now();
-  var type = String(requestedType || '').toUpperCase();
-
-  var glyphs = {
-    BULLET: DocumentApp.GlyphType.BULLET,
-    NUMBER: DocumentApp.GlyphType.NUMBER,
-    LETTER: DocumentApp.GlyphType.LATIN_LOWER,
-    ROMAN: DocumentApp.GlyphType.ROMAN_UPPER
-  };
-
-  var glyph = glyphs[type];
-
-  if (!glyph) {
-    throw new Error(
-      'Invalid test type. Use BULLET, NUMBER, LETTER or ROMAN.'
-    );
-  }
-
-  var targets = getNativeListTestTargets_();
-
-  if (!targets.length) {
-    throw new Error(
-      'Place the cursor in a paragraph or select several paragraphs.'
-    );
-  }
-
-targets = expandSoftBreakTargetsForNativeTest_(targets);
-
-  var parent = targets[0].getParent();
-
-  targets.forEach(function(paragraph) {
-    if (paragraph.getParent() !== parent) {
-      throw new Error(
-        'The test selection must be inside the same document container.'
-      );
-    }
-  });
-
-  for (var i = 1; i < targets.length; i++) {
-    if (
-      parent.getChildIndex(targets[i]) !==
-      parent.getChildIndex(targets[i - 1]) + 1
-    ) {
-      throw new Error(
-        'Select one contiguous block of paragraphs.'
-      );
-    }
-  }
-
-  /*
-   * Los separadores temporales impiden que la prueba reutilice
-   * accidentalmente una lista anterior.
-   */
-  var before = parent.insertParagraph(
-    parent.getChildIndex(targets[0]),
-    '\uE410'
-  );
-
-  var lastTarget = targets[targets.length - 1];
-
-  var after = parent.insertParagraph(
-    parent.getChildIndex(lastTarget) + 1,
-    '\uE411'
-  );
-
-  var anchor = null;
-  var created = [];
-
-  try {
-    targets.forEach(function(source) {
-      var text = source.getText();
-      var paragraphAttributes = source.getAttributes();
-      var textAttributes = source.editAsText().getAttributes();
-
-      var item = parent.insertListItem(
-        parent.getChildIndex(source),
-        text
-      );
-
-      /*
-       * Conserva el formato común del texto.
-       */
-      try {
-        item.setAttributes(paragraphAttributes);
-      } catch (error) {}
-
-      if (text.length) {
-        try {
-          item.editAsText().setAttributes(textAttributes);
-        } catch (error) {}
-      }
-
-      if (!anchor) {
-        /*
-         * Primer elemento: crea la lista automática nativa.
-         */
-        item.setGlyphType(glyph);
-        anchor = item;
-      } else {
-        /*
-         * Los demás párrafos pertenecen a la misma lista automática.
-         */
-        item.setListId(anchor);
-      }
-
-      item.setNestingLevel(0);
-
-      /*
-       * Left = 0.25"
-       * Hanging = 0.25"
-       * Right = 0"
-       */
-      item.setIndentFirstLine(18);
-      item.setIndentStart(36);
-      item.setIndentEnd(0);
-
-      created.push(item);
-      source.removeFromParent();
-    });
   } finally {
     try {
       before.removeFromParent();
@@ -280,63 +90,17 @@ targets = expandSoftBreakTargetsForNativeTest_(targets);
     } catch (error) {}
   }
 
-  var sameListId = true;
-  var anchorListId = anchor.getListId();
-
-  created.forEach(function(item) {
-    if (item.getListId() !== anchorListId) {
-      sameListId = false;
-    }
-  });
-
   return {
-    testId: 'TEST-NATIVE-LIST-GLYPH',
-    requestedType: type,
-    itemsApplied: created.length,
-    glyphType: String(anchor.getGlyphType()),
-    sameListId: sameListId,
-    nestingLevel: anchor.getNestingLevel(),
+    testId: 'TEST-DIRECT-NATIVE-LETTER',
+    glyphType: String(item.getGlyphType()),
+    nestingLevel: item.getNestingLevel(),
     elapsedMs: Date.now() - started,
     ok: true
   };
 }
 
 
-function getNativeListTestTargets_() {
-  var doc = DocumentApp.getActiveDocument();
-  var selection = doc.getSelection();
-  var targets = [];
-
-  function addTarget(element) {
-    var paragraph = findNativeListParagraph_(element);
-
-    if (
-      paragraph &&
-      targets.indexOf(paragraph) === -1
-    ) {
-      targets.push(paragraph);
-    }
-  }
-
-  if (selection) {
-    selection.getRangeElements().forEach(function(rangeElement) {
-      addTarget(rangeElement.getElement());
-    });
-
-    return targets;
-  }
-
-  var cursor = doc.getCursor();
-
-  if (cursor) {
-    addTarget(cursor.getElement());
-  }
-
-  return targets;
-}
-
-
-function findNativeListParagraph_(element) {
+function findTestParagraph_(element) {
   var current = element;
 
   while (current) {
@@ -354,60 +118,110 @@ function findNativeListParagraph_(element) {
 
   return null;
 }
-function expandSoftBreakTargetsForNativeTest_(targets) {
-  var expanded = [];
 
-  targets.forEach(function(source) {
-    var sourceText = source.getText();
-    var lines = sourceText.split(/\r\n|\r|\n/);
 
-    if (lines.length === 1) {
-      expanded.push(source);
-      return;
-    }
+function extractCursorLine_(source, cursor) {
+  var sourceText = source.getText();
 
-    var parent = source.getParent();
-    var sourceIndex = parent.getChildIndex(source);
-    var paragraphAttributes = source.getAttributes();
+  if (!/[\r\n]/.test(sourceText)) {
+    return source;
+  }
 
-    /*
-     * Para esta prueba conservamos los atributos comunes del texto.
-     */
-    var textAttributes = {};
+  var rawElement = cursor.getElement();
+  var cursorOffset = Math.max(
+    0,
+    cursor.getSurroundingTextOffset()
+  );
 
-    if (sourceText.length) {
-      try {
-        textAttributes = source.editAsText().getAttributes();
-      } catch (error) {}
-    }
+  if (rawElement.getType() === DocumentApp.ElementType.TEXT) {
+    cursorOffset += getTextOffsetInTestParagraph_(
+      source,
+      rawElement
+    );
+  }
 
-    var created = [];
+  var lines = [];
+  var breakPattern = /\r\n|\r|\n/g;
+  var start = 0;
+  var match;
 
-    lines.forEach(function(line, index) {
-      var paragraph = parent.insertParagraph(
-        sourceIndex + index,
-        line
-      );
-
-      try {
-        paragraph.setAttributes(paragraphAttributes);
-      } catch (error) {}
-
-      if (line.length) {
-        try {
-          paragraph.editAsText().setAttributes(textAttributes);
-        } catch (error) {}
-      }
-
-      created.push(paragraph);
+  while ((match = breakPattern.exec(sourceText)) !== null) {
+    lines.push({
+      text: sourceText.substring(start, match.index),
+      start: start
     });
 
-    source.removeFromParent();
+    start = match.index + match[0].length;
+  }
 
-    created.forEach(function(paragraph) {
-      expanded.push(paragraph);
-    });
+  lines.push({
+    text: sourceText.substring(start),
+    start: start
   });
 
-  return expanded;
+  var selectedLine = 0;
+
+  for (var i = 1; i < lines.length; i++) {
+    if (cursorOffset >= lines[i].start) {
+      selectedLine = i;
+    }
+  }
+
+  var parent = source.getParent();
+  var sourceIndex = parent.getChildIndex(source);
+  var paragraphAttributes = source.getAttributes();
+  var created = [];
+
+  lines.forEach(function(line, index) {
+    var paragraph = parent.insertParagraph(
+      sourceIndex + index,
+      line.text
+    );
+
+    try {
+      paragraph.setAttributes(paragraphAttributes);
+    } catch (error) {}
+
+    created.push(paragraph);
+  });
+
+  source.removeFromParent();
+
+  return created[selectedLine];
+}
+
+
+function getTextOffsetInTestParagraph_(owner, target) {
+  if (owner === target) return 0;
+
+  var offset = 0;
+  var found = false;
+
+  function walk(element) {
+    if (element === target) {
+      found = true;
+      return true;
+    }
+
+    if (element.getType() === DocumentApp.ElementType.TEXT) {
+      offset += element.asText().getText().length;
+      return false;
+    }
+
+    if (!element.getNumChildren) {
+      return false;
+    }
+
+    for (var i = 0; i < element.getNumChildren(); i++) {
+      if (walk(element.getChild(i))) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  walk(owner);
+
+  return found ? offset : 0;
 }
