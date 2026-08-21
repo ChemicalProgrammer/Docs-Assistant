@@ -1,112 +1,118 @@
 /**
- * TEST-022
- *
- * Convierte UN párrafo normal en el primer elemento de una lista nativa:
- *
- * a) Octubre
- *
- * No utiliza:
- * - rangos con nombre
- * - documentos temporales
- * - DriveApp
- * - prefijos escritos como texto
+ * TEST-023
+ * Crea una lista nativa a) independiente sin leer el documento completo.
  */
 function runCurrentTest() {
-  return testCreateIndependentNativeInciso_();
+  return testFastIndependentNativeInciso_();
 }
 
 
-function testCreateIndependentNativeInciso_() {
+function testFastIndependentNativeInciso_() {
   const started = Date.now();
-
   const activeDoc = DocumentApp.getActiveDocument();
   const documentId = activeDoc.getId();
   const activeTabId = activeDoc.getActiveTab().getId();
 
-  const uniqueId = Utilities.getUuid().replace(/-/g, '');
-  const targetMarker = 'DASTART' + uniqueId;
-  const separatorMarker = 'DASEPARATOR' + uniqueId;
+  const target = getSingleParagraph023_(activeDoc);
 
-  let apiReadMs = 0;
+  if (target.getType() !== DocumentApp.ElementType.PARAGRAPH) {
+    throw new Error(
+      'TEST-023: coloque el cursor dentro de un párrafo normal.'
+    );
+  }
+
+  if (/[\r\n]/.test(target.getText())) {
+    throw new Error(
+      'TEST-023: use un párrafo independiente sin Shift+Enter.'
+    );
+  }
+
+  const targetParent = target.getParent();
+
+  if (
+    !targetParent ||
+    targetParent.getType() !==
+      DocumentApp.ElementType.BODY_SECTION
+  ) {
+    throw new Error(
+      'TEST-023: el párrafo debe estar en el cuerpo del documento.'
+    );
+  }
+
+  const targetIndex = targetParent.getChildIndex(target);
+  const originalText = target.getText();
+  const originalAttributes = target.getAttributes();
+
+  let temporaryTabId = null;
   let apiWriteMs = 0;
 
+  activeDoc.saveAndClose();
+
   try {
-    const target = getSingleSelectedParagraph_(activeDoc);
-
-    if (target.getType() !== DocumentApp.ElementType.PARAGRAPH) {
-      throw new Error(
-        'Seleccione solamente un párrafo normal, por ejemplo Octubre.'
-      );
-    }
-
-    if (/[\r\n]/.test(target.getText())) {
-      throw new Error(
-        'Esta prueba acepta un solo párrafo sin saltos de línea internos.'
-      );
-    }
-
-    const parent = target.getParent();
-
-    if (
-      !parent ||
-      parent.getType() !== DocumentApp.ElementType.BODY_SECTION
-    ) {
-      throw new Error(
-        'Para esta prueba, el párrafo debe estar directamente en el cuerpo del documento.'
-      );
-    }
-
     /*
-     * El separador impide que Docs una el nuevo inciso con una lista
-     * anterior que tenga el mismo preset.
+     * 1. Crear una pestaña temporal.
      */
-    const targetIndex = parent.getChildIndex(target);
-    parent.insertParagraph(targetIndex, separatorMarker);
+    let apiStarted = Date.now();
 
-    /*
-     * Un tabulador inicial hace que el preset use el segundo nivel:
-     * nivel 0 = 1)
-     * nivel 1 = a)
-     */
-    target.editAsText().insertText(0, '\t' + targetMarker);
-
-    /*
-     * A partir de aquí no se vuelve a utilizar ningún objeto obtenido
-     * desde activeDoc, porque el documento quedará cerrado.
-     */
-    activeDoc.saveAndClose();
-
-    const readStarted = Date.now();
-
-    const apiDocument = Docs.Documents.get(documentId, {
-      includeTabsContent: true,
-      fields: buildTest022Fields_()
-    });
-
-    apiReadMs = Date.now() - readStarted;
-
-    const located = findApiParagraphWithMarker_(
-      apiDocument.tabs || [],
-      targetMarker
+    const addResponse = Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            addDocumentTab: {
+              tabProperties: {
+                title: 'DocsAssistant temporary list'
+              }
+            }
+          }
+        ]
+      },
+      documentId
     );
 
-    if (!located) {
+    apiWriteMs += Date.now() - apiStarted;
+
+    temporaryTabId =
+      addResponse &&
+      addResponse.replies &&
+      addResponse.replies[0] &&
+      addResponse.replies[0].addDocumentTab &&
+      addResponse.replies[0].addDocumentTab.tabProperties
+        ? addResponse.replies[0]
+            .addDocumentTab.tabProperties.tabId
+        : null;
+
+    if (!temporaryTabId) {
       throw new Error(
-        'No se encontró el marcador temporal en la respuesta reducida de Docs API.'
+        'Docs API no devolvió el ID de la pestaña temporal.'
       );
     }
 
-    const writeStarted = Date.now();
+    /*
+     * 2. En una pestaña nueva conocemos los índices:
+     *    el primer párrafo comienza en el índice 1.
+     */
+    const templateText = 'DOCSASSISTANT_NATIVE_INCISO_TEMPLATE';
+
+    apiStarted = Date.now();
 
     Docs.Documents.batchUpdate(
       {
         requests: [
           {
+            insertText: {
+              location: {
+                index: 1,
+                tabId: temporaryTabId
+              },
+              text: templateText
+            }
+          },
+          {
             createParagraphBullets: {
               range: {
-                startIndex: located.startIndex,
-                endIndex: located.endIndex,
-                tabId: located.tabId
+                startIndex: 1,
+                endIndex: 1 + templateText.length,
+                tabId: temporaryTabId
               },
               bulletPreset:
                 'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
@@ -117,83 +123,195 @@ function testCreateIndependentNativeInciso_() {
       documentId
     );
 
-    apiWriteMs = Date.now() - writeStarted;
+    apiWriteMs += Date.now() - apiStarted;
 
-    const reopenedDoc = DocumentApp.openById(documentId);
-    const reopenedTab = reopenedDoc.getTab(located.tabId);
+    /*
+     * 3. Copiar localmente la lista nativa al párrafo seleccionado.
+     */
+    const workingDoc = DocumentApp.openById(documentId);
 
-    if (!reopenedTab) {
+    const temporaryTab = workingDoc.getTab(temporaryTabId);
+    const destinationTab = workingDoc.getTab(activeTabId);
+
+    if (!temporaryTab || !destinationTab) {
       throw new Error(
-        'No se pudo volver a abrir la pestaña donde está el párrafo.'
+        'No se pudieron abrir las pestañas necesarias.'
       );
     }
 
-    const body = reopenedTab.asDocumentTab().getBody();
-    const markerResult = body.findText(targetMarker);
+    const temporaryBody =
+      temporaryTab.asDocumentTab().getBody();
 
-    if (!markerResult) {
+    const templateItems = temporaryBody.getListItems();
+
+    if (!templateItems || templateItems.length === 0) {
       throw new Error(
-        'Docs API aplicó la operación, pero no se encontró el párrafo resultante.'
+        'No se creó el elemento de lista nativo temporal.'
       );
     }
 
-    const listItem = findParagraphAncestor_(
-      markerResult.getElement()
-    );
+    const templateItem = templateItems[0];
+
+    /*
+     * Preset:
+     * nivel 0 = 1)
+     * nivel 1 = a)
+     * nivel 2 = i)
+     */
+    templateItem.setNestingLevel(1);
+
+    const destinationBody =
+      destinationTab.asDocumentTab().getBody();
+
+    const originalParagraph =
+      destinationBody.getChild(targetIndex);
 
     if (
-      !listItem ||
-      listItem.getType() !== DocumentApp.ElementType.LIST_ITEM
+      !originalParagraph ||
+      originalParagraph.getType() !==
+        DocumentApp.ElementType.PARAGRAPH
     ) {
       throw new Error(
-        'El párrafo resultante no es un elemento de lista nativo.'
+        'El párrafo seleccionado cambió durante la prueba.'
       );
     }
 
-    /*
-     * El marcador se elimina; nunca queda como parte del texto real.
-     */
-    listItem.replaceText(targetMarker, '');
+    if (originalParagraph.getText() !== originalText) {
+      throw new Error(
+        'El contenido del párrafo cambió durante la prueba.'
+      );
+    }
+
+    const insertedItem = destinationBody.insertListItem(
+      targetIndex,
+      templateItem.copy()
+    );
 
     /*
-     * Left 0.25", hanging 0.25", right 0".
+     * Reemplazar únicamente el contenido de la plantilla.
+     * La configuración nativa a) y el listId permanecen.
      */
-    listItem
+    insertedItem.setText(originalText);
+
+    insertedItem
+      .setAttributes(originalAttributes)
+      .setHeading(DocumentApp.ParagraphHeading.NORMAL)
+      .setNestingLevel(1)
       .setIndentFirstLine(18)
       .setIndentStart(36)
       .setIndentEnd(0);
 
-    const separatorRemoved = removeMarkerParagraph_(
-      body,
-      separatorMarker
+    /*
+     * El elemento nuevo está antes del párrafo original.
+     */
+    originalParagraph.removeFromParent();
+
+    const createdListId = insertedItem.getListId();
+
+    workingDoc.saveAndClose();
+
+    /*
+     * 4. Eliminar la pestaña temporal.
+     */
+    apiStarted = Date.now();
+
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            deleteTab: {
+              tabId: temporaryTabId
+            }
+          }
+        ]
+      },
+      documentId
     );
 
+    apiWriteMs += Date.now() - apiStarted;
+    temporaryTabId = null;
+
+    /*
+     * 5. Verificación final después de eliminar la pestaña.
+     */
+    const verificationDoc = DocumentApp.openById(documentId);
+    const verificationTab =
+      verificationDoc.getTab(activeTabId);
+
+    if (!verificationTab) {
+      throw new Error(
+        'No se pudo abrir la pestaña para verificar.'
+      );
+    }
+
+    const verificationBody =
+      verificationTab.asDocumentTab().getBody();
+
+    const verifiedElement =
+      verificationBody.getChild(targetIndex);
+
+    if (
+      !verifiedElement ||
+      verifiedElement.getType() !==
+        DocumentApp.ElementType.LIST_ITEM
+    ) {
+      throw new Error(
+        'El elemento final no es una lista nativa.'
+      );
+    }
+
+    const verifiedItem = verifiedElement.asListItem();
+
+    let sharesEarlierListId = false;
+
+    for (let i = 0; i < targetIndex; i++) {
+      const earlier = verificationBody.getChild(i);
+
+      if (
+        earlier.getType() ===
+        DocumentApp.ElementType.LIST_ITEM
+      ) {
+        const earlierItem = earlier.asListItem();
+
+        if (
+          earlierItem.getListId() ===
+          verifiedItem.getListId()
+        ) {
+          sharesEarlierListId = true;
+          break;
+        }
+      }
+    }
+
     const result = {
-      testId: 'TEST-022-NATIVE-INDEPENDENT-INCISO',
+      testId: 'TEST-023-FAST-NATIVE-INDEPENDENT-INCISO',
       ok: true,
       isNative: true,
-      glyphType: String(listItem.getGlyphType()),
-      nestingLevel: listItem.getNestingLevel(),
-      listId: listItem.getListId(),
-      separatorRemoved: separatorRemoved,
-      apiReadMs: apiReadMs,
+      glyphType: String(verifiedItem.getGlyphType()),
+      nestingLevel: verifiedItem.getNestingLevel(),
+      listId: verifiedItem.getListId(),
+      originalListId: createdListId,
+      independentFromEarlierLists: !sharesEarlierListId,
+      temporaryTabRemoved: true,
+      apiReadMs: 0,
       apiWriteMs: apiWriteMs,
       elapsedMs: Date.now() - started
     };
 
-    reopenedDoc.saveAndClose();
+    verificationDoc.saveAndClose();
     return result;
 
   } catch (error) {
-    cleanupTest022Markers_(
-      documentId,
-      activeTabId,
-      targetMarker,
-      separatorMarker
-    );
+    if (temporaryTabId) {
+      deleteTemporaryTab023_(
+        documentId,
+        temporaryTabId
+      );
+    }
 
     throw new Error(
-      'TEST-022: ' + (error && error.message
+      'TEST-023: ' +
+      (error && error.message
         ? error.message
         : String(error))
     );
@@ -201,39 +319,36 @@ function testCreateIndependentNativeInciso_() {
 }
 
 
-/**
- * Obtiene un único párrafo desde una selección o desde el cursor.
- */
-function getSingleSelectedParagraph_(doc) {
+function getSingleParagraph023_(doc) {
   const selection = doc.getSelection();
 
   if (selection) {
     const rangeElements = selection.getRangeElements();
-    let selectedParagraph = null;
+    let paragraph = null;
 
     for (let i = 0; i < rangeElements.length; i++) {
-      const paragraph = findParagraphAncestor_(
+      const current = findParagraph023_(
         rangeElements[i].getElement()
       );
 
+      if (!current) {
+        continue;
+      }
+
       if (!paragraph) {
+        paragraph = current;
         continue;
       }
 
-      if (!selectedParagraph) {
-        selectedParagraph = paragraph;
-        continue;
-      }
-
-      if (!sameDocumentElement_(selectedParagraph, paragraph)) {
+      if (!sameElement023_(paragraph, current)) {
         throw new Error(
-          'Seleccione solamente un párrafo para esta prueba.'
+          'TEST-023: seleccione solamente un párrafo.'
         );
       }
     }
 
-    if (selectedParagraph) {
-      return selectedParagraph;
+    if (paragraph) {
+      return paragraph;
     }
   }
 
@@ -241,28 +356,25 @@ function getSingleSelectedParagraph_(doc) {
 
   if (!cursor) {
     throw new Error(
-      'Seleccione un párrafo normal o coloque el cursor dentro de él.'
+      'TEST-023: coloque el cursor dentro de un párrafo.'
     );
   }
 
-  const cursorParagraph = findParagraphAncestor_(
+  const paragraph = findParagraph023_(
     cursor.getElement()
   );
 
-  if (!cursorParagraph) {
+  if (!paragraph) {
     throw new Error(
-      'No se pudo identificar el párrafo que contiene el cursor.'
+      'TEST-023: no se encontró el párrafo.'
     );
   }
 
-  return cursorParagraph;
+  return paragraph;
 }
 
 
-/**
- * Sube desde Text hasta Paragraph o ListItem.
- */
-function findParagraphAncestor_(element) {
+function findParagraph023_(element) {
   let current = element;
 
   while (current) {
@@ -282,10 +394,7 @@ function findParagraphAncestor_(element) {
 }
 
 
-/**
- * Compara dos referencias sin depender de la igualdad de proxies.
- */
-function sameDocumentElement_(first, second) {
+function sameElement023_(first, second) {
   if (first === second) {
     return true;
   }
@@ -302,180 +411,20 @@ function sameDocumentElement_(first, second) {
 }
 
 
-/**
- * Field mask reducido.
- *
- * Incluye solamente:
- * - identificador de pestaña
- * - índices de párrafos
- * - contenido de textRun
- *
- * Se contemplan hasta cuatro niveles de pestañas anidadas.
- */
-function buildTest022Fields_() {
-  return 'tabs(' + buildTest022TabFields_(4) + ')';
-}
-
-
-function buildTest022TabFields_(remainingDepth) {
-  let fields =
-    'tabProperties(tabId),' +
-    'documentTab(' +
-      'body(' +
-        'content(' +
-          'startIndex,' +
-          'endIndex,' +
-          'paragraph(' +
-            'elements(' +
-              'textRun(content)' +
-            ')' +
-          ')' +
-        ')' +
-      ')' +
-    ')';
-
-  if (remainingDepth > 0) {
-    fields +=
-      ',childTabs(' +
-        buildTest022TabFields_(remainingDepth - 1) +
-      ')';
-  }
-
-  return fields;
-}
-
-
-/**
- * Busca el marcador dentro de todas las pestañas devueltas por Docs API.
- */
-function findApiParagraphWithMarker_(tabs, marker) {
-  for (let i = 0; i < tabs.length; i++) {
-    const tab = tabs[i];
-    const tabId = tab.tabProperties
-      ? tab.tabProperties.tabId
-      : null;
-
-    const content =
-      tab.documentTab &&
-      tab.documentTab.body &&
-      tab.documentTab.body.content
-        ? tab.documentTab.body.content
-        : [];
-
-    for (let j = 0; j < content.length; j++) {
-      const structuralElement = content[j];
-
-      if (!structuralElement.paragraph) {
-        continue;
-      }
-
-      const paragraphText = getApiParagraphText_(
-        structuralElement.paragraph
-      );
-
-      if (paragraphText.indexOf(marker) !== -1) {
-        return {
-          tabId: tabId,
-          startIndex: structuralElement.startIndex,
-          endIndex: structuralElement.endIndex
-        };
-      }
-    }
-
-    const childResult = findApiParagraphWithMarker_(
-      tab.childTabs || [],
-      marker
-    );
-
-    if (childResult) {
-      return childResult;
-    }
-  }
-
-  return null;
-}
-
-
-function getApiParagraphText_(paragraph) {
-  const elements = paragraph.elements || [];
-  let text = '';
-
-  for (let i = 0; i < elements.length; i++) {
-    if (elements[i].textRun) {
-      text += elements[i].textRun.content || '';
-    }
-  }
-
-  return text;
-}
-
-
-/**
- * Elimina el párrafo separador temporal.
- */
-function removeMarkerParagraph_(body, marker) {
-  const result = body.findText(marker);
-
-  if (!result) {
-    return false;
-  }
-
-  const paragraph = findParagraphAncestor_(
-    result.getElement()
-  );
-
-  if (!paragraph) {
-    return false;
-  }
-
-  paragraph.removeFromParent();
-  return true;
-}
-
-
-/**
- * Limpieza de emergencia si cualquier fase falla.
- */
-function cleanupTest022Markers_(
-  documentId,
-  tabId,
-  targetMarker,
-  separatorMarker
-) {
+function deleteTemporaryTab023_(documentId, tabId) {
   try {
-    const doc = DocumentApp.openById(documentId);
-    const tab = doc.getTab(tabId);
-
-    if (!tab) {
-      return;
-    }
-
-    const body = tab.asDocumentTab().getBody();
-
-    const targetResult = body.findText(targetMarker);
-
-    if (targetResult) {
-      const paragraph = findParagraphAncestor_(
-        targetResult.getElement()
-      );
-
-      if (paragraph) {
-        paragraph.replaceText(targetMarker, '');
-
-        const text = paragraph.editAsText();
-
-        if (
-          text.getText().length > 0 &&
-          text.getText().charAt(0) === '\t'
-        ) {
-          text.deleteText(0, 0);
-        }
-      }
-    }
-
-    removeMarkerParagraph_(body, separatorMarker);
-    doc.saveAndClose();
-
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            deleteTab: {
+              tabId: tabId
+            }
+          }
+        ]
+      },
+      documentId
+    );
   } catch (cleanupError) {
     // No ocultar el error original.
   }
