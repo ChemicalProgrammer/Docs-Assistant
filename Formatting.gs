@@ -84,9 +84,14 @@ function applyNamedStyleToParagraph_(
  */
 function getParagraphHeadingEnum_(styleName) {
   const map = {
+
     NORMAL:
       DocumentApp.ParagraphHeading.NORMAL,
+TITLE:
+  DocumentApp.ParagraphHeading.TITLE,
 
+SUBTITLE:
+  DocumentApp.ParagraphHeading.SUBTITLE,
     H1:
       DocumentApp.ParagraphHeading.HEADING1,
 
