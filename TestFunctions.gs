@@ -4,7 +4,52 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testContinueExactLetterList_();
+  return testRestartExactLetterList_();
+}
+
+function testRestartExactLetterList_() {
+  const started = Date.now();
+  const document = DocumentApp.getActiveDocument();
+
+  const targets = testGetParagraphsFromCurrentContext_(document);
+
+  if (!targets || targets.length === 0) {
+    throw new Error(
+      'Place the cursor in a paragraph or select one or more lines.'
+    );
+  }
+
+  // Checkbox desactivado:
+  // no busca listas anteriores y siempre comienza desde a).
+  const result = testCreateExactManualList_(
+    targets,
+    'LETTER',
+    1
+  );
+
+  document.saveAndClose();
+
+  let paragraphsApplied = null;
+
+  if (Array.isArray(result)) {
+    paragraphsApplied = result.length;
+  } else if (
+    result &&
+    typeof result.paragraphsApplied === 'number'
+  ) {
+    paragraphsApplied = result.paragraphsApplied;
+  }
+
+  return {
+    testId: 'TEST-015-RESTART-LETTER-LIST',
+    ok: true,
+    requestedType: 'LETTER',
+    requestedContinue: false,
+    initialOrdinal: 1,
+    sourceElements: targets.length,
+    paragraphsApplied: paragraphsApplied,
+    elapsedMs: Date.now() - started
+  };
 }
 
 /**
