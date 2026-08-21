@@ -9,10 +9,11 @@ function runCurrentTest() {
 
 /**
  * TEST-006
- * Obtiene los índices API del párrafo actual usando un NamedRange temporal.
  *
- * No modifica visualmente el formato.
- * Siempre intenta eliminar el marcador al terminar.
+ * Localiza los índices API del párrafo actual mediante un
+ * NamedRange temporal, sin recorrer todo el documento.
+ *
+ * Esta prueba no cambia visualmente el formato.
  */
 function testLocateWithTemporaryNamedRange_() {
   const started = Date.now();
@@ -33,10 +34,15 @@ function testLocateWithTemporaryNamedRange_() {
   }
 
   const documentId = document.getId();
+
   const markerName =
     'DOCS_ASSISTANT_TEST_' +
     Utilities.getUuid().replace(/-/g, '');
 
+  /*
+   * Crear el NamedRange temporal alrededor
+   * del párrafo donde está el cursor.
+   */
   const setupStarted = Date.now();
 
   const range = document
@@ -44,27 +50,45 @@ function testLocateWithTemporaryNamedRange_() {
     .addElement(paragraph)
     .build();
 
-  const namedRange = document.addNamedRange(markerName, range);
-  const namedRangeId = namedRange.getId();
+  const namedRange = document.addNamedRange(
+    markerName,
+    range
+  );
 
+  const documentAppNamedRangeId = namedRange.getId();
   const markerSetupMs = Date.now() - setupStarted;
 
+  /*
+   * Guardar los cambios para que el NamedRange
+   * esté disponible desde la API de Docs.
+   */
   const saveStarted = Date.now();
+
   document.saveAndClose();
+
   const saveMs = Date.now() - saveStarted;
 
   let apiReadMs = 0;
   let cleanupMs = 0;
 
   try {
+    /*
+     * Obtener solamente los NamedRanges.
+     */
     const apiStarted = Date.now();
 
-    const apiDocument = Docs.Documents.get(documentId, {
-      fields: 'namedRanges'
-    });
+    const apiDocument = Docs.Documents.get(
+      documentId,
+      {
+        fields: 'namedRanges'
+      }
+    );
 
     apiReadMs = Date.now() - apiStarted;
 
+    /*
+     * Encontrar el grupo mediante el nombre único.
+     */
     const group =
       apiDocument.namedRanges &&
       apiDocument.namedRanges[markerName];
@@ -74,10 +98,9 @@ function testLocateWithTemporaryNamedRange_() {
         ? group.namedRanges
         : [];
 
-    const match =
-      candidates.find(function (item) {
-        return item.namedRangeId === namedRangeId;
-      }) || candidates[0];
+    const match = candidates.length
+      ? candidates[0]
+      : null;
 
     const apiRange =
       match &&
@@ -92,45 +115,74 @@ function testLocateWithTemporaryNamedRange_() {
       );
     }
 
+    /*
+     * Eliminar el NamedRange utilizando su nombre.
+     *
+     * La limpieza no debe impedir que la prueba
+     * devuelva los índices encontrados.
+     */
     const cleanupStarted = Date.now();
+    let cleanupError = null;
 
-    Docs.Documents.batchUpdate(
-      {
-        requests: [
-          {
-            deleteNamedRange: {
-              namedRangeId: namedRangeId
-            }
-          }
-        ]
-      },
-      documentId
-    );
-
-    cleanupMs = Date.now() - cleanupStarted;
-
-    return {
-      ok: true,
-      testId: 'TEST-006-TEMPORARY-NAMED-RANGE',
-      startIndex: apiRange.startIndex,
-      endIndex: apiRange.endIndex,
-      targetLength: paragraph.getText().length,
-      markerSetupMs: markerSetupMs,
-      saveMs: saveMs,
-      apiReadMs: apiReadMs,
-      cleanupMs: cleanupMs,
-      elapsedMs: Date.now() - started
-    };
-
-  } catch (error) {
-    // Intentar eliminar el marcador aunque falle la lectura.
     try {
       Docs.Documents.batchUpdate(
         {
           requests: [
             {
               deleteNamedRange: {
-                namedRangeId: namedRangeId
+                name: markerName
+              }
+            }
+          ]
+        },
+        documentId
+      );
+    } catch (error) {
+      cleanupError =
+        error && error.message
+          ? error.message
+          : String(error);
+    }
+
+    cleanupMs = Date.now() - cleanupStarted;
+
+    return {
+      ok: true,
+      testId: 'TEST-006-TEMPORARY-NAMED-RANGE',
+
+      startIndex: apiRange.startIndex,
+      endIndex: apiRange.endIndex,
+      targetLength: paragraph.getText().length,
+
+      documentAppNamedRangeId:
+        documentAppNamedRangeId,
+
+      apiNamedRangeId:
+        match.namedRangeId || null,
+
+      markerSetupMs: markerSetupMs,
+      saveMs: saveMs,
+      apiReadMs: apiReadMs,
+      cleanupMs: cleanupMs,
+
+      cleanupOk: !cleanupError,
+      cleanupError: cleanupError,
+
+      elapsedMs: Date.now() - started
+    };
+
+  } catch (error) {
+    /*
+     * Si falla la lectura, intentar eliminar
+     * igualmente el NamedRange temporal.
+     */
+    try {
+      Docs.Documents.batchUpdate(
+        {
+          requests: [
+            {
+              deleteNamedRange: {
+                name: markerName
               }
             }
           ]
