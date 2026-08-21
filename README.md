@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.2
+# Docs Assistant v0.9.3
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -461,3 +461,19 @@ It is not written into the document or source code.
   - total Apps Script server time
   - total client-observed time
 - Reset is intentionally OFF by default because the native Apply path is the fastest possible sidebar implementation.
+
+
+## v0.9.3 — Simple A/B/C formatting architecture
+- A) `applyStyleToParagraph_(paragraph, styleName)`
+  - lightweight reset: Normal text -> requested style;
+  - no style-property reads;
+  - no manual font/size/indent reconstruction.
+- B) `getSegments_(selection, comparison)`
+  - classifies selected content as Tables, Blank lines, H1-H6, Lists/Bullets/Numbers/Letters/Romans, Normal paragraphs, Figures, Equations, Figure captions, Table captions, Notes, etc.;
+  - with no selection, only the cursor element is considered;
+  - filters include `NORMAL_PARAGRAPH`, `HEADING`, `STYLEABLE_TEXT`, `LIST`, `TABLE`, `FIGURE`, etc.
+- C) `applyStyleToSelection_(selection, styleName)`
+  - gets `STYLEABLE_TEXT` segments using B;
+  - calls A for each returned paragraph.
+- Sidebar uses one public call: `applyStyleToCurrentContext(styleName)`.
+- Existing callers remain compatible through `applyNamedStyleToParagraph_()` alias.

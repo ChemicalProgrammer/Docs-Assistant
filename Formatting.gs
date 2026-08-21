@@ -1,92 +1,29 @@
-function applyNamedStyle(styleName, resetOverrides) {
-  const started = Date.now();
-
-  // IMPORTANT PERFORMANCE RULE:
-  // Prefer a real cursor first. If the user only has a cursor in one line,
-  // do not inspect/expand an old selection.
-  const targetStart = Date.now();
-  const targets = getStyleTargetParagraphs_();
-  const targetMs = Date.now() - targetStart;
-
-  if (!targets.length) {
-    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
-  }
-
-  const reset = Boolean(resetOverrides);
-  let styleContext = null;
-  let styleLookupMs = 0;
-
-  // Fast mode does NOT read style properties at all.
-  // Reset mode reads them once for the whole operation.
-  if (reset) {
-    const styleStart = Date.now();
-    styleContext = getResetStyleContext_(styleName);
-    styleLookupMs = Date.now() - styleStart;
-  }
-
-  const applyStart = Date.now();
-
-  targets.forEach(p => {
-    applyNamedStyleToParagraph_(p, styleName, reset, styleContext);
-  });
-
-  const applyMs = Date.now() - applyStart;
-
-  return {
-    ok: true,
-    paragraphs: targets.length,
-    mode: targets.length === 1 ? 'single' : 'range',
-    resetOverrides: reset,
-    targetMs: targetMs,
-    styleLookupMs: styleLookupMs,
-    applyMs: applyMs,
-    elapsedMs: Date.now() - started
-  };
-}
-
 /**
- * Single low-level named-style formatter used throughout the Add-on.
+ * A) APPLY STYLE TO ONE PARAGRAPH
+ * Arguments: paragraph + styleName.
  *
- * FAST MODE:
- *   exactly one DocumentApp formatting mutation: setHeading().
- *
- * RESET MODE:
- *   setHeading() + one paragraph-attribute write + one text-attribute write.
- *   The style properties are read once outside this function and reused.
+ * Reset strategy: Normal text -> requested style.
+ * No property inspection or manual reconstruction.
  */
-function applyNamedStyleToParagraph_(paragraph, styleName, resetOverrides, styleContext) {
-  const heading = getParagraphHeadingEnum_(styleName);
+function applyStyleToParagraph_(paragraph, styleName) {
+  if (!paragraph) return null;
 
-  // This is the fastest possible native Apply operation.
-  paragraph.setHeading(heading);
+  const targetHeading = getParagraphHeadingEnum_(styleName);
 
-  if (!resetOverrides) {
-    return paragraph;
-  }
+  paragraph.setHeading(DocumentApp.ParagraphHeading.NORMAL);
 
-  const ctx = styleContext || getResetStyleContext_(styleName);
-
-  // Reapply the effective paragraph properties of the current Named Style.
-  if (
-    ctx.paragraphAttributes &&
-    Object.keys(ctx.paragraphAttributes).length
-  ) {
-    paragraph.setAttributes(ctx.paragraphAttributes);
-  }
-
-  // Reapply the effective character properties of the current Named Style.
-  // This removes common direct overrides such as manual bold/font/size.
-  const text = paragraph.editAsText();
-  if (
-    text &&
-    text.getText().length &&
-    ctx.textAttributes &&
-    Object.keys(ctx.textAttributes).length
-  ) {
-    text.setAttributes(ctx.textAttributes);
+  if (targetHeading !== DocumentApp.ParagraphHeading.NORMAL) {
+    paragraph.setHeading(targetHeading);
   }
 
   return paragraph;
+}
+
+/**
+ * Backward-compatible alias used by existing formatting helpers.
+ */
+function applyNamedStyleToParagraph_(paragraph, styleName) {
+  return applyStyleToParagraph_(paragraph, styleName);
 }
 
 function getParagraphHeadingEnum_(styleName) {
@@ -100,7 +37,7 @@ function getParagraphHeadingEnum_(styleName) {
     H6: DocumentApp.ParagraphHeading.HEADING6
   };
 
-  const heading = map[styleName];
+  const heading = map[String(styleName || '').toUpperCase()];
 
   if (!heading) {
     throw new Error('Unknown style: ' + styleName);
@@ -110,195 +47,372 @@ function getParagraphHeadingEnum_(styleName) {
 }
 
 /**
- * Builds an EFFECTIVE visual snapshot for Reset Overrides.
- * Heading styles can inherit from Normal text, so merge Normal first,
- * then the selected Heading style.
+ * B) RETURN SEGMENTS
+ * Arguments: selection + comparison.
+ *
+ * Supported comparisons:
+ * ALL, STYLEABLE_TEXT, NORMAL_PARAGRAPH, HEADING, H1..H6,
+ * BLANK, TABLE, FIGURE, FIGURE_CAPTION, TABLE_CAPTION, NOTE,
+ * LIST, BULLET, NUMBER, LETTER, ROMAN, EQUATION.
  */
-function getResetStyleContext_(styleName) {
+function getSegments_(selection, comparison) {
+  const segments = collectSegments_(selection);
+  return filterSegments_(segments, comparison || 'ALL');
+}
+
+/**
+ * Public diagnostic wrapper. Returns serializable metadata only.
+ */
+function getSegmentSummary(comparison) {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+  const segments = getSegments_(selection, comparison || 'ALL');
+
+  return segments.map((segment, index) => ({
+    index: index,
+    type: segment.type,
+    subtype: segment.subtype || '',
+    text: segment.text || ''
+  }));
+}
+
+function collectSegments_(selection) {
+  const doc = DocumentApp.getActiveDocument();
   const body = getActiveBody_();
-  const heading = getParagraphHeadingEnum_(styleName);
 
-  const normalAttrs = body.getHeadingAttributes(
-    DocumentApp.ParagraphHeading.NORMAL
-  ) || {};
+  if (selection) {
+    const ranges = selection.getRangeElements();
+    if (!ranges.length) return [];
 
-  const ownAttrs = styleName === 'NORMAL'
-    ? normalAttrs
-    : (body.getHeadingAttributes(heading) || {});
+    const firstTop = getTopLevelBodyElement_(ranges[0].getElement(), body);
+    const lastTop = getTopLevelBodyElement_(
+      ranges[ranges.length - 1].getElement(),
+      body
+    );
 
-  const effective = mergeNamedStyleAttributes_(normalAttrs, ownAttrs);
+    if (firstTop && lastTop) {
+      try {
+        const firstIndex = body.getChildIndex(firstTop);
+        const lastIndex = body.getChildIndex(lastTop);
+        const minIndex = Math.min(firstIndex, lastIndex);
+        const maxIndex = Math.max(firstIndex, lastIndex);
+        const result = [];
+
+        for (let i = minIndex; i <= maxIndex; i++) {
+          const segment = classifySegment_(body.getChild(i));
+          if (segment) result.push(segment);
+        }
+
+        return result;
+      } catch (e) {}
+    }
+
+    return collectSegmentsFromRangeElements_(ranges);
+  }
+
+  const cursor = doc.getCursor();
+  if (!cursor) return [];
+
+  const top = getTopLevelBodyElement_(cursor.getElement(), body);
+
+  if (top && top.getType() === DocumentApp.ElementType.TABLE) {
+    const owner = getOwningParagraph_(cursor.getElement());
+    if (owner) {
+      return [{
+        element: owner,
+        type: 'TABLE_CONTENT',
+        subtype: classifyParagraphSubtype_(owner),
+        text: owner.getText()
+      }];
+    }
+  }
+
+  const segment = top ? classifySegment_(top) : null;
+  return segment ? [segment] : [];
+}
+
+function collectSegmentsFromRangeElements_(ranges) {
+  const result = [];
+  const seen = {};
+
+  ranges.forEach(re => {
+    const owner = getOwningParagraph_(re.getElement());
+    if (!owner) return;
+
+    const key = buildElementPathKey_(owner);
+    if (seen[key]) return;
+    seen[key] = true;
+
+    const segment = classifySegment_(owner);
+    if (segment) result.push(segment);
+  });
+
+  return result;
+}
+
+function getTopLevelBodyElement_(element, body) {
+  let current = element;
+
+  while (current) {
+    let parent = null;
+    try { parent = current.getParent(); } catch (e) { return null; }
+    if (!parent) return null;
+
+    try {
+      if (parent.getType() === DocumentApp.ElementType.BODY_SECTION) {
+        body.getChildIndex(current);
+        return current;
+      }
+    } catch (e) {}
+
+    current = parent;
+  }
+
+  return null;
+}
+
+function getOwningParagraph_(element) {
+  let current = element;
+
+  while (current) {
+    const type = current.getType();
+
+    if (
+      type === DocumentApp.ElementType.PARAGRAPH ||
+      type === DocumentApp.ElementType.LIST_ITEM
+    ) {
+      return current;
+    }
+
+    current = current.getParent ? current.getParent() : null;
+  }
+
+  return null;
+}
+
+function buildElementPathKey_(element) {
+  const parts = [];
+  let current = element;
+
+  while (current && current.getParent) {
+    const parent = current.getParent();
+    if (!parent || !parent.getChildIndex) break;
+
+    try {
+      parts.unshift(parent.getChildIndex(current));
+    } catch (e) {
+      break;
+    }
+
+    try {
+      if (parent.getType() === DocumentApp.ElementType.BODY_SECTION) break;
+    } catch (e) {}
+
+    current = parent;
+  }
+
+  return parts.join('.');
+}
+
+function classifySegment_(element) {
+  if (!element || !element.getType) return null;
+
+  const type = element.getType();
+
+  if (type === DocumentApp.ElementType.TABLE) {
+    return {
+      element: element,
+      type: 'TABLE',
+      subtype: '',
+      text: ''
+    };
+  }
+
+  if (
+    type !== DocumentApp.ElementType.PARAGRAPH &&
+    type !== DocumentApp.ElementType.LIST_ITEM
+  ) {
+    return {
+      element: element,
+      type: 'OTHER',
+      subtype: String(type),
+      text: ''
+    };
+  }
+
+  const text = element.getText() || '';
+  const subtype = classifyParagraphSubtype_(element);
 
   return {
-    paragraphAttributes: filterParagraphStyleAttributes_(effective),
-    textAttributes: filterTextStyleAttributes_(effective)
+    element: element,
+    type: subtype,
+    subtype: subtype,
+    text: text
   };
 }
 
-function mergeNamedStyleAttributes_(base, own) {
-  const merged = {};
+function classifyParagraphSubtype_(paragraph) {
+  const text = String(paragraph.getText() || '');
+  const trimmed = text.trim();
 
-  Object.keys(base || {}).forEach(key => {
-    if (base[key] !== undefined && base[key] !== null) {
-      merged[key] = base[key];
-    }
-  });
+  if (!trimmed) return 'BLANK';
 
-  Object.keys(own || {}).forEach(key => {
-    if (own[key] !== undefined && own[key] !== null) {
-      merged[key] = own[key];
-    }
-  });
-
-  return merged;
-}
-
-function filterParagraphStyleAttributes_(attrs) {
-  const result = {};
-  const supported = [
-    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
-    DocumentApp.Attribute.LINE_SPACING,
-    DocumentApp.Attribute.SPACING_BEFORE,
-    DocumentApp.Attribute.SPACING_AFTER,
-    DocumentApp.Attribute.INDENT_START,
-    DocumentApp.Attribute.INDENT_END,
-    DocumentApp.Attribute.INDENT_FIRST_LINE,
-    DocumentApp.Attribute.KEEP_WITH_NEXT
-  ];
-
-  supported.forEach(attr => {
-    if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      result[attr] = attrs[attr];
-    }
-  });
-
-  return result;
-}
-
-function filterTextStyleAttributes_(attrs) {
-  const result = {};
-  const supported = [
-    DocumentApp.Attribute.FONT_FAMILY,
-    DocumentApp.Attribute.FONT_SIZE,
-    DocumentApp.Attribute.BOLD,
-    DocumentApp.Attribute.ITALIC,
-    DocumentApp.Attribute.UNDERLINE,
-    DocumentApp.Attribute.STRIKETHROUGH,
-    DocumentApp.Attribute.FOREGROUND_COLOR,
-    DocumentApp.Attribute.BACKGROUND_COLOR
-  ];
-
-  supported.forEach(attr => {
-    if (attrs[attr] !== undefined && attrs[attr] !== null) {
-      result[attr] = attrs[attr];
-    }
-  });
-
-  return result;
-}
-
-function getCurrentParagraph_() {
-  const doc = DocumentApp.getActiveDocument();
-  const cursor = doc.getCursor();
-
-  if (!cursor) return null;
-
-  let el = cursor.getElement();
-
-  while (
-    el &&
-    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-    el.getType() !== DocumentApp.ElementType.LIST_ITEM
-  ) {
-    el = el.getParent();
+  if (paragraph.getType() === DocumentApp.ElementType.LIST_ITEM) {
+    return classifyListItem_(paragraph.asListItem());
   }
 
-  return el || null;
-}
+  if (paragraphContainsFigure_(paragraph)) return 'FIGURE';
+  if (paragraphContainsEquation_(paragraph)) return 'EQUATION';
 
-function getStyleTargetParagraphs_() {
-  // Cursor FIRST is intentional. Clicking the sidebar can leave an old
-  // selection active in Docs; scanning that selection can make a one-line
-  // style click unexpectedly expensive.
-  const current = getCurrentParagraph_();
-  if (current) {
-    return [current];
-  }
-
-  const selection = DocumentApp.getActiveDocument().getSelection();
-  if (selection) {
-    return getSelectedParagraphsIncludingGaps_();
-  }
-
-  return [];
-}
-
-function getSelectedParagraphsIncludingGaps_() {
-  const selection = DocumentApp.getActiveDocument().getSelection();
-  if (!selection) return [];
-
-  const ranges = selection.getRangeElements();
-  if (!ranges.length) return [];
-
-  if (ranges.length === 1) {
-    let one = ranges[0].getElement();
-
-    while (
-      one &&
-      one.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-      one.getType() !== DocumentApp.ElementType.LIST_ITEM
-    ) {
-      one = one.getParent();
-    }
-
-    return one ? [one] : [];
-  }
-
-  let first = ranges[0].getElement();
-  let last = ranges[ranges.length - 1].getElement();
-
-  while (
-    first &&
-    first.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-    first.getType() !== DocumentApp.ElementType.LIST_ITEM
-  ) {
-    first = first.getParent();
-  }
-
-  while (
-    last &&
-    last.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-    last.getType() !== DocumentApp.ElementType.LIST_ITEM
-  ) {
-    last = last.getParent();
-  }
-
-  if (!first || !last) return [];
-
-  const parent = first.getParent();
+  if (/^\s*figure\b/i.test(trimmed)) return 'FIGURE_CAPTION';
+  if (/^\s*table\b/i.test(trimmed)) return 'TABLE_CAPTION';
+  if (/^\s*(?:notes?|notas?)\b/i.test(trimmed)) return 'NOTE';
 
   try {
-    const firstIndex = parent.getChildIndex(first);
-    const lastIndex = parent.getChildIndex(last);
-    const minIndex = Math.min(firstIndex, lastIndex);
-    const maxIndex = Math.max(firstIndex, lastIndex);
-    const result = [];
+    const heading = paragraph.getHeading();
 
-    for (let i = minIndex; i <= maxIndex; i++) {
-      const child = parent.getChild(i);
-      const type = child.getType();
+    if (heading === DocumentApp.ParagraphHeading.HEADING1) return 'H1';
+    if (heading === DocumentApp.ParagraphHeading.HEADING2) return 'H2';
+    if (heading === DocumentApp.ParagraphHeading.HEADING3) return 'H3';
+    if (heading === DocumentApp.ParagraphHeading.HEADING4) return 'H4';
+    if (heading === DocumentApp.ParagraphHeading.HEADING5) return 'H5';
+    if (heading === DocumentApp.ParagraphHeading.HEADING6) return 'H6';
+  } catch (e) {}
+
+  return 'NORMAL_PARAGRAPH';
+}
+
+function classifyListItem_(item) {
+  try {
+    const glyph = item.getGlyphType();
+
+    if (glyph === DocumentApp.GlyphType.BULLET) return 'BULLET';
+    if (glyph === DocumentApp.GlyphType.NUMBER) return 'NUMBER';
+    if (glyph === DocumentApp.GlyphType.LATIN_LOWER) return 'LETTER';
+    if (glyph === DocumentApp.GlyphType.LATIN_UPPER) return 'LETTER';
+    if (glyph === DocumentApp.GlyphType.ROMAN_LOWER) return 'ROMAN';
+    if (glyph === DocumentApp.GlyphType.ROMAN_UPPER) return 'ROMAN';
+  } catch (e) {}
+
+  return 'LIST';
+}
+
+function paragraphContainsFigure_(paragraph) {
+  try {
+    for (let i = 0; i < paragraph.getNumChildren(); i++) {
+      const childType = paragraph.getChild(i).getType();
 
       if (
-        type === DocumentApp.ElementType.PARAGRAPH ||
-        type === DocumentApp.ElementType.LIST_ITEM
+        childType === DocumentApp.ElementType.INLINE_IMAGE ||
+        childType === DocumentApp.ElementType.INLINE_DRAWING
       ) {
-        result.push(child);
+        return true;
       }
     }
+  } catch (e) {}
 
-    return result;
-  } catch (e) {
-    return getSelectedParagraphs_();
+  try {
+    const positioned = paragraph.getPositionedImages();
+    if (positioned && positioned.length) return true;
+  } catch (e) {}
+
+  return false;
+}
+
+function paragraphContainsEquation_(paragraph) {
+  try {
+    for (let i = 0; i < paragraph.getNumChildren(); i++) {
+      if (paragraph.getChild(i).getType() === DocumentApp.ElementType.EQUATION) {
+        return true;
+      }
+    }
+  } catch (e) {}
+
+  return false;
+}
+
+function filterSegments_(segments, comparison) {
+  const filters = Array.isArray(comparison)
+    ? comparison.map(v => String(v).toUpperCase())
+    : [String(comparison || 'ALL').toUpperCase()];
+
+  if (filters.indexOf('ALL') >= 0) return segments;
+
+  return segments.filter(segment =>
+    filters.some(filter => segmentMatches_(segment, filter))
+  );
+}
+
+function segmentMatches_(segment, filter) {
+  const type = String(segment.type || '').toUpperCase();
+
+  if (filter === type) return true;
+
+  if (filter === 'HEADING') {
+    return /^H[1-6]$/.test(type);
   }
+
+  if (filter === 'LIST') {
+    return ['LIST', 'BULLET', 'NUMBER', 'LETTER', 'ROMAN'].indexOf(type) >= 0;
+  }
+
+  if (filter === 'STYLEABLE_TEXT') {
+    return (
+      type === 'NORMAL_PARAGRAPH' ||
+      type === 'BLANK' ||
+      /^H[1-6]$/.test(type)
+    );
+  }
+
+  if (filter === 'CAPTION') {
+    return type === 'FIGURE_CAPTION' || type === 'TABLE_CAPTION';
+  }
+
+  return false;
+}
+
+/**
+ * C) APPLY STYLE TO SELECTION
+ * Arguments: selection + styleName.
+ *
+ * Uses B to get STYLEABLE_TEXT segments, then A for each element.
+ */
+function applyStyleToSelection_(selection, styleName) {
+  const segments = getSegments_(selection, 'STYLEABLE_TEXT');
+
+  segments.forEach(segment => {
+    applyStyleToParagraph_(segment.element, styleName);
+  });
+
+  return segments.length;
+}
+
+/**
+ * Single public entry point used by the sidebar.
+ */
+function applyStyleToCurrentContext(styleName) {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+
+  const count = applyStyleToSelection_(selection, styleName);
+
+  if (!count) {
+    throw new Error('No styleable paragraph was found at the cursor/selection.');
+  }
+
+  return {
+    ok: true,
+    paragraphs: count,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Legacy public name kept for existing callers.
+ */
+function applyNamedStyle(styleName) {
+  return applyStyleToCurrentContext(styleName);
 }
 
 function sentenceCaseHeading_(value) {
