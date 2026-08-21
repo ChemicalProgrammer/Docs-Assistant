@@ -688,76 +688,120 @@ function segmentMatches_(segment, filter) {
 }
 
 /**
- * C) APPLY STYLE TO SELECTION
- * Arguments: selection + styleName.
+ * Aplica el estilo a todos los párrafos o ListItems
+ * encontrados en la selección.
  *
- * Uses B to get STYLEABLE_TEXT segments, then applies all styles in one API
- * batch so every paragraph inherits from the document's Named Style.
+ * Se utiliza ALL porque un encabezado numerado puede
+ * seguir siendo un ListItem con estilo NORMAL.
  */
-function applyStyleToSelection_(selection, styleName) {
-  const segments = getSegments_(selection, 'STYLEABLE_TEXT');
+function applyStyleToSelection_(
+  selection,
+  styleName
+) {
+  const segments = getSegments_(
+    selection,
+    'ALL'
+  );
 
-  applyInheritedNamedStyles_(segments.map(segment => ({
-    paragraph: segment.element,
-    styleName: styleName
-  })));
+  let count = 0;
 
-  return segments.length;
+  segments.forEach(function (segment) {
+    const element = segment.element;
+
+    if (
+      !element ||
+      typeof element.getType !== 'function'
+    ) {
+      return;
+    }
+
+    const elementType = element.getType();
+
+    const isStyleable =
+      elementType ===
+        DocumentApp.ElementType.PARAGRAPH ||
+      elementType ===
+        DocumentApp.ElementType.LIST_ITEM;
+
+    if (!isStyleable) {
+      return;
+    }
+
+    applyStyleToParagraph_(
+      element,
+      styleName
+    );
+
+    count++;
+  });
+
+  return count;
 }
 
 /**
- * Single public entry point used by the sidebar.
+ * Entrada pública utilizada por los botones del sidebar.
  */
 function applyStyleToCurrentContext(styleName) {
   const started = Date.now();
-  const doc = DocumentApp.getActiveDocument();
-  const body = getActiveBody_();
-  const cursor = doc.getCursor();
-  let count = 0;
-  let targetMode = '';
+  const document =
+    DocumentApp.getActiveDocument();
 
-  // Cursor must be checked before selection. When focus moves to the sidebar,
-  // Google Docs can still expose an earlier selection. Selection-first logic
-  // can therefore scan and format a large stale range instead of the paragraph
-  // where the user just placed the insertion point.
-  if (cursor) {
-    const owner = getOwningParagraph_(cursor.getElement());
+  const selection = document.getSelection();
 
-    // This also supports numbered headings, which Docs represents as ListItem.
-    // Paragraphs inside tables remain protected.
-    if (owner && getTopLevelBodyElement_(owner, body) === owner) {
-      applyStyleToParagraph_(owner, styleName);
-      count = 1;
-      targetMode = 'cursor';
+  let count = applyStyleToSelection_(
+    selection,
+    styleName
+  );
+
+  /*
+   * Fallback para el cursor si la segmentación
+   * no devolvió ningún elemento.
+   */
+  if (!count) {
+    const cursor = document.getCursor();
+
+    if (cursor) {
+      const owner = getOwningParagraph_(
+        cursor.getElement()
+      );
+
+      if (owner) {
+        applyStyleToParagraph_(
+          owner,
+          styleName
+        );
+
+        count = 1;
+      }
     }
   }
 
-  // Only use the selection when Docs reports no valid cursor target.
-  if (!count && !cursor) {
-    const selection = doc.getSelection();
-    count = applyStyleToSelection_(selection, styleName);
-    if (count) targetMode = 'selection';
+  if (!count) {
+    throw new Error(
+      'No paragraph or heading was found ' +
+      'at the cursor/selection.'
+    );
   }
 
-  if (!count) {
-    throw new Error('No paragraph or heading was found at the cursor/selection.');
-  }
+  /*
+   * Fuerza el guardado antes de responder
+   * a la interfaz.
+   */
+  document.saveAndClose();
 
   return {
     ok: true,
     paragraphs: count,
-    targetMode: targetMode,
     elapsedMs: Date.now() - started
   };
 }
 
 /**
- * Legacy public name kept for existing callers.
+ * Nombre público anterior, conservado por compatibilidad.
  */
 function applyNamedStyle(styleName) {
   return applyStyleToCurrentContext(styleName);
 }
-
 function sentenceCaseHeading_(value) {
   value = String(value || '');
   if (!value) return value;
