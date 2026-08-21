@@ -1,52 +1,125 @@
 /**
- * A) APPLY ONE DOCUMENT NAMED STYLE WITHOUT DIRECT-FORMATTING OVERRIDES
- * Arguments: paragraph + styleName.
+ * Aplica el Named Style configurado actualmente en el documento.
  *
- * DocumentApp.setHeading() changes the named style but does not remove direct
- * text/paragraph formatting. The Advanced Docs service resets those direct
- * fields so the paragraph inherits the document's current Named Style.
+ * Primero elimina los overrides directos mediante null.
+ * Después aplica el estilo solicitado.
+ *
+ * No modifica:
+ * - contenido;
+ * - hipervínculos;
+ * - listId;
+ * - tipo de numeración;
+ * - nivel de anidación.
  */
-function applyStyleToParagraph_(paragraph, styleName) {
-  if (!paragraph) return null;
+function applyStyleToParagraph_(
+  paragraph,
+  styleName
+) {
+  if (!paragraph) {
+    return null;
+  }
 
-  applyInheritedNamedStyles_([{
-    paragraph: paragraph,
-    styleName: styleName
-  }]);
+  const targetHeading =
+    getParagraphHeadingEnum_(styleName);
+
+  paragraph.setAttributes(
+    getNamedStyleResetAttributes_()
+  );
+
+  paragraph.setHeading(targetHeading);
 
   return paragraph;
 }
 
 /**
- * Internal base-style helper for Lists, Captions and Notes. Those composite
- * formatters intentionally add explicit formatting immediately afterwards.
+ * Atributos que deben volver a heredarse del Named Style.
  */
-function applyNamedStyleToParagraph_(paragraph, styleName) {
-  if (!paragraph) return null;
-  paragraph.setHeading(getParagraphHeadingEnum_(styleName));
-  return paragraph;
+function getNamedStyleResetAttributes_() {
+  const attributes = {};
+
+  const attributesToReset = [
+    DocumentApp.Attribute.FONT_FAMILY,
+    DocumentApp.Attribute.FONT_SIZE,
+    DocumentApp.Attribute.FOREGROUND_COLOR,
+    DocumentApp.Attribute.BACKGROUND_COLOR,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.ITALIC,
+    DocumentApp.Attribute.UNDERLINE,
+    DocumentApp.Attribute.STRIKETHROUGH,
+
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
+    DocumentApp.Attribute.INDENT_START,
+    DocumentApp.Attribute.INDENT_END,
+    DocumentApp.Attribute.INDENT_FIRST_LINE,
+    DocumentApp.Attribute.LINE_SPACING,
+    DocumentApp.Attribute.SPACING_BEFORE,
+    DocumentApp.Attribute.SPACING_AFTER
+  ];
+
+  attributesToReset.forEach(function (
+    attribute
+  ) {
+    attributes[attribute] = null;
+  });
+
+  return attributes;
 }
 
+/**
+ * Alias utilizado por otras funciones existentes.
+ */
+function applyNamedStyleToParagraph_(
+  paragraph,
+  styleName
+) {
+  return applyStyleToParagraph_(
+    paragraph,
+    styleName
+  );
+}
+
+/**
+ * Convierte el nombre utilizado por la interfaz
+ * al enum de DocumentApp.
+ */
 function getParagraphHeadingEnum_(styleName) {
   const map = {
-    NORMAL: DocumentApp.ParagraphHeading.NORMAL,
-    H1: DocumentApp.ParagraphHeading.HEADING1,
-    H2: DocumentApp.ParagraphHeading.HEADING2,
-    H3: DocumentApp.ParagraphHeading.HEADING3,
-    H4: DocumentApp.ParagraphHeading.HEADING4,
-    H5: DocumentApp.ParagraphHeading.HEADING5,
-    H6: DocumentApp.ParagraphHeading.HEADING6
+    NORMAL:
+      DocumentApp.ParagraphHeading.NORMAL,
+
+    H1:
+      DocumentApp.ParagraphHeading.HEADING1,
+
+    H2:
+      DocumentApp.ParagraphHeading.HEADING2,
+
+    H3:
+      DocumentApp.ParagraphHeading.HEADING3,
+
+    H4:
+      DocumentApp.ParagraphHeading.HEADING4,
+
+    H5:
+      DocumentApp.ParagraphHeading.HEADING5,
+
+    H6:
+      DocumentApp.ParagraphHeading.HEADING6
   };
 
-  const heading = map[String(styleName || '').toUpperCase()];
+  const normalizedStyle = String(
+    styleName || ''
+  ).toUpperCase();
+
+  const heading = map[normalizedStyle];
 
   if (!heading) {
-    throw new Error('Unknown style: ' + styleName);
+    throw new Error(
+      'Unknown style: ' + styleName
+    );
   }
 
   return heading;
 }
-
 const NAMED_STYLE_TEXT_RESET_FIELDS_ = [
   'bold',
   'italic',
