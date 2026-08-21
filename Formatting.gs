@@ -120,6 +120,154 @@ function getParagraphHeadingEnum_(styleName) {
 
   return heading;
 }
+
+
+/**
+ * Reaplica los estilos existentes dentro de una selección.
+ *
+ * Reglas:
+ * - H1–H6 conservan su nivel.
+ * - Title y Subtitle se conservan.
+ * - Texto común recibe NORMAL.
+ * - Párrafos vacíos reciben NORMAL.
+ * - Numeración, listas, contenido e hipervínculos se conservan.
+ */
+function formatSelectedNamedStyles() {
+  const started = Date.now();
+
+  const document =
+    DocumentApp.getActiveDocument();
+
+  const selection = document.getSelection();
+
+  if (!selection) {
+    throw new Error(
+      'Select the paragraphs you want to format.'
+    );
+  }
+
+  /*
+   * ALL permite incluir encabezados, texto normal,
+   * ListItems y párrafos vacíos.
+   */
+  const segments = getSegments_(
+    selection,
+    'ALL'
+  );
+
+  let formatted = 0;
+  let headings = 0;
+  let normal = 0;
+  let blank = 0;
+  let skipped = 0;
+
+  segments.forEach(function (segment) {
+    const paragraph = segment.element;
+
+    if (
+      !paragraph ||
+      typeof paragraph.getType !== 'function'
+    ) {
+      skipped++;
+      return;
+    }
+
+    const elementType = paragraph.getType();
+
+    const isParagraph =
+      elementType ===
+        DocumentApp.ElementType.PARAGRAPH ||
+      elementType ===
+        DocumentApp.ElementType.LIST_ITEM;
+
+    if (!isParagraph) {
+      skipped++;
+      return;
+    }
+
+    const text = String(
+      paragraph.getText() || ''
+    );
+
+    const isBlank = !text.trim();
+
+    let styleName = 'NORMAL';
+
+    /*
+     * Los párrafos vacíos siempre reciben NORMAL.
+     * Los demás conservan su estilo nombrado actual.
+     */
+    if (!isBlank) {
+      styleName =
+        getExistingNamedStyleName_(paragraph);
+    }
+
+    applyStyleToParagraph_(
+      paragraph,
+      styleName
+    );
+
+    formatted++;
+
+    if (isBlank) {
+      blank++;
+    } else if (
+      /^H[1-6]$/.test(styleName) ||
+      styleName === 'TITLE' ||
+      styleName === 'SUBTITLE'
+    ) {
+      headings++;
+    } else {
+      normal++;
+    }
+  });
+
+  if (!formatted) {
+    throw new Error(
+      'The selection contains no paragraphs to format.'
+    );
+  }
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    paragraphs: formatted,
+    headings: headings,
+    normal: normal,
+    blank: blank,
+    skipped: skipped,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Devuelve el nombre del estilo actual del párrafo.
+ * Cualquier estilo desconocido se trata como NORMAL.
+ */
+function getExistingNamedStyleName_(
+  paragraph
+) {
+  const heading = String(
+    paragraph.getHeading()
+  );
+
+  const map = {
+    NORMAL: 'NORMAL',
+    TITLE: 'TITLE',
+    SUBTITLE: 'SUBTITLE',
+    HEADING1: 'H1',
+    HEADING2: 'H2',
+    HEADING3: 'H3',
+    HEADING4: 'H4',
+    HEADING5: 'H5',
+    HEADING6: 'H6'
+  };
+
+  return map[heading] || 'NORMAL';
+}
+
+
 const NAMED_STYLE_TEXT_RESET_FIELDS_ = [
   'bold',
   'italic',
