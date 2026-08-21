@@ -4,7 +4,7 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testApplyHeading4Attributes_();
+  return testLocateParagraphWithApi_();
 }
 
 /**
@@ -141,3 +141,125 @@ function testFindParagraph_(element) {
 
   return null;
 }
+
+/**
+ * TEST 003
+ * Localiza el rango API exacto del párrafo del cursor.
+ * No cambia ningún formato.
+ */
+function testLocateParagraphWithApi_() {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const cursor = doc.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'No cursor detected. Click inside one paragraph without selecting text.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error(
+      'The cursor is not inside a Paragraph or ListItem.'
+    );
+  }
+
+  let body = doc.getBody();
+  let activeTabId = '';
+
+  try {
+    const activeTab = doc.getActiveTab();
+
+    if (activeTab) {
+      activeTabId = activeTab.getId();
+      body = activeTab.asDocumentTab().getBody();
+    }
+  } catch (error) {}
+
+  /*
+   * Esta prueba usa la respuesta API simplificada del primer tab.
+   * Evita descargar todo el documento con todos sus atributos y objetos.
+   */
+  try {
+    const tabs = doc.getTabs();
+
+    if (
+      tabs.length &&
+      activeTabId &&
+      tabs[0].getId() !== activeTabId
+    ) {
+      throw new Error(
+        'TEST-003 currently requires the first document tab to be active.'
+      );
+    }
+  } catch (error) {
+    if (String(error.message || error).indexOf('TEST-003') >= 0) {
+      throw error;
+    }
+  }
+
+  const childIndex = body.getChildIndex(paragraph);
+  let targetOrdinal = -1;
+  let paragraphOrdinal = 0;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const element = body.getChild(i);
+    const type = element.getType();
+
+    const styleable =
+      type === DocumentApp.ElementType.PARAGRAPH ||
+      type === DocumentApp.ElementType.LIST_ITEM;
+
+    if (!styleable) continue;
+
+    if (i === childIndex) {
+      targetOrdinal = paragraphOrdinal;
+    }
+
+    paragraphOrdinal++;
+  }
+
+  if (targetOrdinal < 0) {
+    throw new Error(
+      'The cursor paragraph could not be mapped inside the document body.'
+    );
+  }
+
+  const apiStarted = Date.now();
+
+  const apiDocument = Docs.Documents.get(doc.getId(), {
+    fields: 'revisionId,body(content(startIndex,endIndex,paragraph))'
+  });
+
+  const apiReadMs = Date.now() - apiStarted;
+
+  const apiParagraphs = (apiDocument.body.content || [])
+    .filter(element => element.paragraph);
+
+  const apiParagraph = apiParagraphs[targetOrdinal];
+
+  if (!apiParagraph) {
+    throw new Error(
+      'The corresponding API paragraph was not found.'
+    );
+  }
+
+  return {
+    ok: true,
+    testId: 'TEST-003-LOCATE-API-RANGE',
+    childIndex: childIndex,
+    paragraphOrdinal: targetOrdinal,
+    documentParagraphs: paragraphOrdinal,
+    apiParagraphs: apiParagraphs.length,
+    startIndex: apiParagraph.startIndex,
+    endIndex: apiParagraph.endIndex,
+    apiReadMs: apiReadMs,
+    elapsedMs: Date.now() - started,
+    message: 'The paragraph API range was located successfully.'
+  };
+}
+
+
+
