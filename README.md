@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.3
+# Docs Assistant v0.9.4
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -477,3 +477,14 @@ It is not written into the document or source code.
   - calls A for each returned paragraph.
 - Sidebar uses one public call: `applyStyleToCurrentContext(styleName)`.
 - Existing callers remain compatible through `applyNamedStyleToParagraph_()` alias.
+
+
+## v0.9.4 — Active document body helper restored
+- Fixed the runtime error `getActiveBody_ is not defined`.
+- Restored the two central document-tab helpers:
+  - `getActiveDocumentTab_()`
+  - `getActiveBody_()`
+- `getActiveBody_()` uses the current Google Docs tab through
+  `getActiveTab().asDocumentTab().getBody()`, with a legacy `doc.getBody()`
+  fallback.
+- No changes were made to the A/B/C style architecture.

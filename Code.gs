@@ -1,3 +1,35 @@
+/**
+ * Returns the active Google Docs tab as a DocumentTab.
+ * Central helper used by all document-body operations.
+ */
+function getActiveDocumentTab_() {
+  const doc = DocumentApp.getActiveDocument();
+
+  try {
+    const tab = doc.getActiveTab();
+    if (tab && typeof tab.asDocumentTab === 'function') {
+      return tab.asDocumentTab();
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+/**
+ * Returns the Body of the currently active document tab.
+ * Falls back to the legacy document body for older/legacy documents.
+ */
+function getActiveBody_() {
+  const doc = DocumentApp.getActiveDocument();
+  const documentTab = getActiveDocumentTab_();
+
+  if (documentTab) {
+    return documentTab.getBody();
+  }
+
+  return doc.getBody();
+}
+
 function onOpen(e) {
   DocumentApp.getUi()
     .createAddonMenu()
