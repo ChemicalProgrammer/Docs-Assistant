@@ -37,17 +37,7 @@ function testNativeAutomaticList_(requestedType) {
     );
   }
 
-  /*
-   * Para esta prueba usa párrafos creados con Enter.
-   * Primero confirmaremos el prefijo nativo.
-   */
-  targets.forEach(function(paragraph) {
-    if (/[\r\n]/.test(paragraph.getText())) {
-      throw new Error(
-        'For this diagnostic use separate paragraphs created with Enter, not Shift+Enter.'
-      );
-    }
-  });
+targets = expandSoftBreakTargetsForNativeTest_(targets);
 
   var parent = targets[0].getParent();
 
@@ -223,4 +213,61 @@ function findNativeListParagraph_(element) {
   }
 
   return null;
+}
+function expandSoftBreakTargetsForNativeTest_(targets) {
+  var expanded = [];
+
+  targets.forEach(function(source) {
+    var sourceText = source.getText();
+    var lines = sourceText.split(/\r\n|\r|\n/);
+
+    if (lines.length === 1) {
+      expanded.push(source);
+      return;
+    }
+
+    var parent = source.getParent();
+    var sourceIndex = parent.getChildIndex(source);
+    var paragraphAttributes = source.getAttributes();
+
+    /*
+     * Para esta prueba conservamos los atributos comunes del texto.
+     */
+    var textAttributes = {};
+
+    if (sourceText.length) {
+      try {
+        textAttributes = source.editAsText().getAttributes();
+      } catch (error) {}
+    }
+
+    var created = [];
+
+    lines.forEach(function(line, index) {
+      var paragraph = parent.insertParagraph(
+        sourceIndex + index,
+        line
+      );
+
+      try {
+        paragraph.setAttributes(paragraphAttributes);
+      } catch (error) {}
+
+      if (line.length) {
+        try {
+          paragraph.editAsText().setAttributes(textAttributes);
+        } catch (error) {}
+      }
+
+      created.push(paragraph);
+    });
+
+    source.removeFromParent();
+
+    created.forEach(function(paragraph) {
+      expanded.push(paragraph);
+    });
+  });
+
+  return expanded;
 }
