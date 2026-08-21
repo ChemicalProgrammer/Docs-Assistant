@@ -273,245 +273,6 @@ function getExistingNamedStyleName_(
 }
 
 
-const NAMED_STYLE_TEXT_RESET_FIELDS_ = [
-  'bold',
-  'italic',
-  'underline',
-  'strikethrough',
-  'smallCaps',
-  'backgroundColor',
-  'foregroundColor',
-  'fontSize',
-  'weightedFontFamily',
-  'baselineOffset'
-].join(',');
-
-const NAMED_STYLE_PARAGRAPH_RESET_FIELDS_ = [
-  'namedStyleType',
-  'alignment',
-  'lineSpacing',
-  'spacingMode',
-  'spaceAbove',
-  'spaceBelow',
-  'borderBetween',
-  'borderTop',
-  'borderBottom',
-  'borderLeft',
-  'borderRight',
-  'indentFirstLine',
-  'indentStart',
-  'indentEnd',
-  'tabStops',
-  'keepLinesTogether',
-  'keepWithNext',
-  'avoidWidowAndOrphan',
-  'shading',
-  'pageBreakBefore'
-].join(',');
-
-/**
- * Applies one or more Named Styles in one atomic Docs API batch.
- * Each assignment is:
- *   { paragraph: Paragraph|ListItem, styleName: 'NORMAL'|'H1'..'H6' }
- *
- * Hyperlinks are not reset, so their destinations remain intact.
- *
- * If savePendingChanges is true, pending DocumentApp changes are committed
- * before the Docs API reads the document. Paragraph ordinals are captured
- * first because saveAndClose() closes the Document instance.
- */
-function applyInheritedNamedStyles_(assignments, savePendingChanges) {
-  assignments = (assignments || []).filter(x => x && x.paragraph);
-  if (!assignments.length) return 0;
-
-  if (typeof Docs === 'undefined' || !Docs.Documents) {
-    throw new Error(
-      'The Advanced Google Docs service is not enabled. Push appsscript.json, ' +
-      'enable the Google Docs API service and authorize the project again.'
-    );
-  }
-
-  const doc = DocumentApp.getActiveDocument();
-  const documentId = doc.getId();
-  const body = getActiveBody_();
-  const tabId = getActiveDocumentTabId_();
-  const uniqueByChildIndex = {};
-
-  // Keep only the last requested style for each paragraph.
-  assignments.forEach(assignment => {
-    getParagraphHeadingEnum_(assignment.styleName);
-
-    const paragraph = assignment.paragraph;
-    const top = getTopLevelBodyElement_(paragraph, body);
-
-    if (top !== paragraph) {
-      throw new Error(
-        'Normal/Heading styles can only be applied to paragraphs in the active document body.'
-      );
-    }
-
-    const childIndex = body.getChildIndex(paragraph);
-    uniqueByChildIndex[childIndex] = {
-      childIndex: childIndex,
-      styleName: String(assignment.styleName || '').toUpperCase()
-    };
-  });
-
-  const normalized = Object.keys(uniqueByChildIndex)
-    .map(key => uniqueByChildIndex[key])
-    .sort((a, b) => a.childIndex - b.childIndex);
-
-  const paragraphOrdinalByBodyChild = buildBodyParagraphOrdinalMap_(body);
-  const bodyParagraphCount = Object.keys(paragraphOrdinalByBodyChild).length;
-
-  // Full Smart Format may have changed lists, captions or notes through
-  // DocumentApp. This is the valid Docs equivalent of publishing those
-  // pending edits before an Advanced Docs API request.
-  if (savePendingChanges === true) {
-    doc.saveAndClose();
-  }
-
-  const apiDocument = Docs.Documents.get(documentId, {
-    includeTabsContent: true
-  });
-  const apiDocumentTab = getApiDocumentTab_(apiDocument, tabId);
-  const apiContent = apiDocumentTab && apiDocumentTab.body
-    ? (apiDocumentTab.body.content || [])
-    : [];
-  const apiParagraphs = apiContent.filter(element => element && element.paragraph);
-
-  if (apiParagraphs.length !== bodyParagraphCount) {
-    throw new Error(
-      'The Apps Script and Docs API paragraph structures are out of sync. Try the style again.'
-    );
-  }
-
-  const requests = [];
-
-  normalized.forEach(assignment => {
-    const paragraphOrdinal = paragraphOrdinalByBodyChild[assignment.childIndex];
-    const structural = typeof paragraphOrdinal === 'undefined'
-      ? null
-      : apiParagraphs[paragraphOrdinal];
-
-    if (
-      !structural ||
-      !Number.isFinite(Number(structural.startIndex)) ||
-      !Number.isFinite(Number(structural.endIndex))
-    ) {
-      throw new Error(
-        'Could not resolve the selected paragraph in the Google Docs API document structure.'
-      );
-    }
-
-    const range = {
-      startIndex: Number(structural.startIndex),
-      endIndex: Number(structural.endIndex)
-    };
-    if (tabId) range.tabId = tabId;
-
-    // The API applies namedStyleType first. Every other field named in this
-    // mask is left unset, so it returns to inheritance from that Named Style.
-    requests.push({
-      updateParagraphStyle: {
-        range: range,
-        paragraphStyle: {
-          namedStyleType: getDocsNamedStyleType_(assignment.styleName)
-        },
-        fields: NAMED_STYLE_PARAGRAPH_RESET_FIELDS_
-      }
-    });
-
-    // Reset visual text properties without removing hyperlink destinations.
-    requests.push({
-      updateTextStyle: {
-        range: range,
-        textStyle: {},
-        fields: NAMED_STYLE_TEXT_RESET_FIELDS_
-      }
-    });
-  });
-
-  const requestBody = {requests: requests};
-  if (apiDocument.revisionId) {
-    requestBody.writeControl = {
-      requiredRevisionId: apiDocument.revisionId
-    };
-  }
-
-  Docs.Documents.batchUpdate(requestBody, documentId);
-  return normalized.length;
-}
-
-function getDocsNamedStyleType_(styleName) {
-  const map = {
-    NORMAL: 'NORMAL_TEXT',
-    H1: 'HEADING_1',
-    H2: 'HEADING_2',
-    H3: 'HEADING_3',
-    H4: 'HEADING_4',
-    H5: 'HEADING_5',
-    H6: 'HEADING_6'
-  };
-  const type = map[String(styleName || '').toUpperCase()];
-  if (!type) throw new Error('Unknown style: ' + styleName);
-  return type;
-}
-
-function getActiveDocumentTabId_() {
-  try {
-    const tab = DocumentApp.getActiveDocument().getActiveTab();
-    return tab && tab.getId ? tab.getId() : '';
-  } catch (e) {
-    return '';
-  }
-}
-
-function getApiDocumentTab_(apiDocument, activeTabId) {
-  const found = findApiTabById_(apiDocument.tabs || [], activeTabId);
-  if (found && found.documentTab) return found.documentTab;
-
-  // Compatibility fallback for a legacy/single-tab API response.
-  if (apiDocument.body) return apiDocument;
-
-  throw new Error('Could not read the active Google Docs tab through the Docs API.');
-}
-
-function findApiTabById_(tabs, tabId) {
-  for (let i = 0; i < (tabs || []).length; i++) {
-    const tab = tabs[i];
-    const properties = tab.tabProperties || {};
-
-    if (!tabId || String(properties.tabId || '') === String(tabId)) {
-      return tab;
-    }
-
-    const childMatch = findApiTabById_(tab.childTabs || [], tabId);
-    if (childMatch) return childMatch;
-  }
-
-  return null;
-}
-
-function buildBodyParagraphOrdinalMap_(body) {
-  const result = {};
-  let paragraphOrdinal = 0;
-
-  for (let i = 0; i < body.getNumChildren(); i++) {
-    const type = body.getChild(i).getType();
-    const isParagraph =
-      type === DocumentApp.ElementType.PARAGRAPH ||
-      type === DocumentApp.ElementType.LIST_ITEM;
-
-    if (!isParagraph) continue;
-
-    result[i] = paragraphOrdinal;
-    paragraphOrdinal++;
-  }
-
-  return result;
-}
-
 /**
  * B) RETURN SEGMENTS
  * Arguments: selection + comparison.
@@ -1126,6 +887,36 @@ function applyFastNativeListPreset_(requestedType) {
     throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
   }
 
+  const result = applyFastNativeListToParagraphs_(
+    body,
+    paragraphs,
+    requestedType,
+    null
+  );
+
+  return {
+    ok: true,
+    requestedType: result.requestedType,
+    automaticList: true,
+    paragraphsApplied: result.listItems.length,
+    glyph: result.glyph,
+    usesDocsApi: false,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Shared native-list engine used by both the four list buttons and
+ * Full Smart Format. It uses DocumentApp only.
+ *
+ * When anchorListItem is supplied, the new items continue that native list.
+ */
+function applyFastNativeListToParagraphs_(
+  body,
+  paragraphs,
+  requestedType,
+  anchorListItem
+) {
   const normalizedType = String(requestedType || '').toUpperCase();
   const glyphType = uiListGetGlyphType_(normalizedType);
   const listItems = paragraphs.map(function(paragraph) {
@@ -1136,22 +927,27 @@ function applyFastNativeListPreset_(requestedType) {
     return uiListConvertParagraph_(body, paragraph);
   });
 
-  const firstListItem = listItems[0];
-  uiListFormatItem_(firstListItem, glyphType);
+  if (!listItems.length) {
+    throw new Error('No paragraphs were supplied to the native-list engine.');
+  }
 
-  for (let i = 1; i < listItems.length; i++) {
+  const firstListItem = anchorListItem || listItems[0];
+  const firstNewItemIndex = anchorListItem ? 0 : 1;
+
+  if (!anchorListItem) {
+    uiListFormatItem_(firstListItem, glyphType);
+  }
+
+  for (let i = firstNewItemIndex; i < listItems.length; i++) {
     listItems[i].setListId(firstListItem);
     uiListFormatItem_(listItems[i], glyphType);
   }
 
   return {
-    ok: true,
     requestedType: normalizedType,
-    automaticList: true,
-    paragraphsApplied: listItems.length,
     glyph: uiListExpectedGlyph_(normalizedType),
-    usesDocsApi: false,
-    elapsedMs: Date.now() - started
+    listItems: listItems,
+    firstListItem: firstListItem
   };
 }
 
@@ -1305,510 +1101,6 @@ function uiListBodyChildIndex_(body, paragraph) {
     return -1;
   }
 }
-
-/**
- * SAFE LIST ENGINE
- * ----------------
- * Number/Letter/Roman use the explicit-prefix fallback.
- * BULLET uses the separate native-bullet engine above so bullets remain
- * true Google Docs ListItems.
- */
-function applyNativeBulletPreset_(paragraphs, continuePrevious) {
-  let anchor = continuePrevious
-    ? findPreviousSafeNativeBullet_(paragraphs[0])
-    : null;
-
-  let tableBullets = 0;
-  let bodyBullets = 0;
-
-  paragraphs.forEach(p => {
-    const targetInsideTable = isInsideTable_(p);
-
-    if (isExistingNativeListOfType_(p, 'BULLET')) {
-      normalizeExistingNativeListParagraph_(p, 'BULLET');
-      if (!anchor) anchor = p.asListItem();
-
-      if (targetInsideTable) tableBullets++;
-      else bodyBullets++;
-      return;
-    }
-
-    const item = convertToSafeNativeBullet_(p, anchor);
-    normalizeExistingNativeListParagraph_(item, 'BULLET');
-
-    if (!anchor) anchor = item;
-
-    if (isInsideTable_(item)) tableBullets++;
-    else bodyBullets++;
-  });
-
-  return {
-    ok: true,
-    requestedContinue: continuePrevious,
-    nativeBullets: true,
-    bodyBullets: bodyBullets,
-    tableBullets: tableBullets,
-    bodyIndent: {left: 0.06, hanging: 0.25},
-    tableIndent: {left: 0.00, hanging: 0.20}
-  };
-}
-
-function convertToSafeNativeBullet_(p, anchor) {
-  const parent = p.getParent();
-  const idx = parent.getChildIndex(p);
-  const content = stripAnyListPrefixText_(p.getText()).trim();
-
-  if (anchor) {
-    const item = parent.insertListItem(idx, content);
-
-    // Critical: assign the known bullet list before removing the original.
-    // Do not call setGlyphType(); the anchor's list definition supplies it.
-    item.setListId(anchor);
-
-    p.removeFromParent();
-    return item;
-  }
-
-  // Create an isolated native bullet list.
-  const before = parent.insertParagraph(idx, '\uE210');
-  const after = parent.insertParagraph(idx + 1, '\uE211');
-  const item = parent.insertListItem(idx + 1, content);
-
-  // Item is surrounded by normal paragraphs, so this glyph change cannot
-  // mutate a neighboring numbered-heading list.
-  item.setGlyphType(DocumentApp.GlyphType.BULLET);
-
-  // Remove original target and temporary separators.
-  p.removeFromParent();
-  try { after.removeFromParent(); } catch (e) {}
-  try { before.removeFromParent(); } catch (e) {}
-
-  return item;
-}
-
-function findPreviousSafeNativeBullet_(target) {
-  const parent = target.getParent();
-  if (!parent) return null;
-
-  const targetIndex = parent.getChildIndex(target);
-
-  for (let i = targetIndex - 1; i >= 0; i--) {
-    const child = parent.getChild(i);
-
-    if (!isExistingNativeListOfType_(child, 'BULLET')) continue;
-
-    // Prefer a bullet already using this Add-on's expected geometry.
-    if (matchesAddonListIndent_(child.asListItem(), 'BULLET')) {
-      return child.asListItem();
-    }
-  }
-
-  return null;
-}
-
-function applyManualListPreset_(paragraphs, type, continuePrevious) {
-  const allowed = ['BULLET', 'NUMBER', 'LETTER', 'ROMAN'];
-  if (allowed.indexOf(type) === -1) throw new Error('Unknown list type.');
-
-  let ordinal = 1;
-
-  if (continuePrevious && type !== 'BULLET') {
-    const previous = findPreviousListOrdinal_(paragraphs[0], type);
-    if (previous > 0) ordinal = previous + 1;
-  }
-
-  paragraphs.forEach(p => {
-    // Surgical preservation rule:
-    // if the line is already a native Google Docs list of the requested type,
-    // do NOT recreate it, do NOT touch listId, and do NOT touch glyph type.
-    // That keeps automatic a)->b), 1.->2., etc. intact and cannot alter
-    // neighboring heading-numbering definitions.
-    if (isExistingNativeListOfType_(p, type)) {
-      normalizeExistingNativeListParagraph_(p, type);
-      return;
-    }
-
-    const original = p.getText();
-    const paragraph = recreateAsParagraph_(p);
-
-    // Stable v0.7.5 behavior for plain paragraphs / incompatible lists.
-    applyNamedStyleToParagraph_(paragraph, 'NORMAL');
-
-    const content = stripAnyListPrefixText_(original).trim();
-
-    switch (type) {
-      case 'BULLET':
-        throw new Error('Bullet formatting must use the native bullet engine.');
-
-      case 'NUMBER':
-        paragraph.setText(String(ordinal) + '. ' + content);
-        ordinal++;
-        break;
-
-      case 'LETTER':
-        paragraph.setText(numberToLetters_(ordinal) + ') ' + content);
-        ordinal++;
-        break;
-
-      case 'ROMAN':
-        paragraph.setText(numberToRoman_(ordinal).toLowerCase() + '. ' + content);
-        ordinal++;
-        break;
-    }
-
-    normalizeManualListParagraph_(paragraph);
-    applyListIndents_(paragraph);
-  });
-
-  return {
-    ok: true,
-    requestedContinue: continuePrevious,
-    leftIndentInches: 0.06,
-    hangingIndentInches: 0.25,
-    safeManualList: true
-  };
-}
-
-function isExistingNativeListOfType_(p, type) {
-  if (!p || p.getType() !== DocumentApp.ElementType.LIST_ITEM) return false;
-
-  try {
-    const glyph = p.asListItem().getGlyphType();
-
-    if (type === 'BULLET') return glyph === DocumentApp.GlyphType.BULLET;
-    if (type === 'NUMBER') return glyph === DocumentApp.GlyphType.NUMBER;
-    if (type === 'LETTER') return glyph === DocumentApp.GlyphType.LATIN_LOWER;
-    if (type === 'ROMAN')  return glyph === DocumentApp.GlyphType.ROMAN_LOWER;
-  } catch (e) {}
-
-  return false;
-}
-
-function normalizeExistingNativeListParagraph_(item, listType) {
-  // Preserve native Google Docs list structure:
-  // - listId unchanged
-  // - glyph type unchanged
-  //
-  // Only style/indent the selected ListItem.
-
-  try {
-    item.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-  } catch (e) {}
-
-  const cfg = getNativeListIndentConfig_(item, listType);
-  const PT_PER_IN = 72;
-
-  // In Docs geometry:
-  // first-line position = Left
-  // wrapped-line position = Left + Hanging
-  item.setIndentFirstLine(cfg.left * PT_PER_IN);
-  item.setIndentStart((cfg.left + cfg.hanging) * PT_PER_IN);
-  item.setIndentEnd(0);
-
-  // Prevent accidental whole-line bold inherited from a preceding heading,
-  // while leaving mixed rich text alone.
-  const text = item.editAsText();
-  const value = text.getText();
-  if (!value) return;
-
-  const normalAttrs = getActiveBody_().getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
-  const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
-
-  if (normalBold !== true) {
-    const boldState = text.isBold();
-    if (boldState === true) {
-      text.setBold(false);
-    }
-  }
-}
-
-function getNativeListIndentConfig_(item, listType) {
-  // Special rule requested for BULLETS inside a table cell.
-  if (listType === 'BULLET' && isInsideTable_(item)) {
-    return {
-      left: 0.00,
-      hanging: 0.20
-    };
-  }
-
-  return {
-    left: 0.06,
-    hanging: 0.25
-  };
-}
-
-function recreateAsParagraph_(p) {
-  if (p.getType() === DocumentApp.ElementType.PARAGRAPH) {
-    return p.asParagraph();
-  }
-
-  // If the source is a native ListItem, convert only the selected item
-  // into a plain paragraph. No glyph/list definition is modified.
-  const parent = p.getParent();
-  const idx = parent.getChildIndex(p);
-  const paragraph = parent.insertParagraph(idx, p.getText());
-  p.removeFromParent();
-  return paragraph;
-}
-
-function normalizeManualListParagraph_(paragraph) {
-  // Reapply the CURRENT Normal text style after setText().
-  // Google Docs can inherit direct character formatting (notably bold)
-  // from a neighboring paragraph when a paragraph/list item is recreated.
-  applyNamedStyleToParagraph_(paragraph, 'NORMAL');
-
-  // Some documents retain direct BOLD on newly created text even after the
-  // named style is reassigned. A manual list is expected to begin as Normal
-  // text, so explicitly clear whole-paragraph bold only when Normal text is
-  // not defined as bold.
-  const body = getActiveBody_();
-  const normalAttrs = body.getHeadingAttributes(DocumentApp.ParagraphHeading.NORMAL);
-  const normalBold = normalAttrs[DocumentApp.Attribute.BOLD];
-
-  if (normalBold !== true) {
-    const t = paragraph.editAsText();
-    if (t.getText().length) t.setBold(false);
-  }
-}
-
-function applyListIndents_(item) {
-  const PT_PER_IN = 72;
-
-  // Requested list geometry:
-  // Left = 0.06 in
-  // Hanging = 0.25 in
-  item.setIndentFirstLine(0.06 * PT_PER_IN);
-  item.setIndentStart((0.06 + 0.25) * PT_PER_IN);
-  item.setIndentEnd(0);
-}
-
-function findPreviousListOrdinal_(target, type) {
-  const parent = target.getParent();
-  if (!parent) return 0;
-
-  const targetIndex = parent.getChildIndex(target);
-
-  for (let i = targetIndex - 1; i >= 0; i--) {
-    const child = parent.getChild(i);
-
-    if (
-      child.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-      child.getType() !== DocumentApp.ElementType.LIST_ITEM
-    ) {
-      continue;
-    }
-
-    const value = child.getText();
-
-    // First prefer lists already formatted by this Add-on.
-    const manual = getManualListOrdinal_(value, type);
-    if (manual > 0) return manual;
-
-    // Backward compatibility: older Add-on versions used native ListItems.
-    // Read them only; never modify their glyph/listId.
-    if (child.getType() === DocumentApp.ElementType.LIST_ITEM) {
-      const item = child.asListItem();
-
-      if (!matchesAddonListIndent_(item, type)) continue;
-
-      try {
-        const glyph = item.getGlyphType();
-
-        if (
-          (type === 'NUMBER' && glyph === DocumentApp.GlyphType.NUMBER) ||
-          (type === 'LETTER' && glyph === DocumentApp.GlyphType.LATIN_LOWER) ||
-          (type === 'ROMAN' && glyph === DocumentApp.GlyphType.ROMAN_LOWER)
-        ) {
-          const nativeOrdinal = getNativeListOrdinalReadOnly_(item);
-          if (nativeOrdinal > 0) return nativeOrdinal;
-        }
-      } catch (e) {}
-    }
-  }
-
-  return 0;
-}
-
-function getManualListOrdinal_(value, type) {
-  const text = String(value || '');
-
-  if (type === 'NUMBER') {
-    const m = text.match(/^\s*(\d+)\.\s+/);
-    return m ? Number(m[1]) : 0;
-  }
-
-  if (type === 'LETTER') {
-    const m = text.match(/^\s*([A-Za-z]+)\)\s+/);
-    return m ? lettersToNumber_(m[1]) : 0;
-  }
-
-  if (type === 'ROMAN') {
-    const m = text.match(/^\s*([ivxlcdm]+)\.\s+/i);
-    return m ? romanToNumber_(m[1]) : 0;
-  }
-
-  return 0;
-}
-
-function matchesAddonListIndent_(item, listType) {
-  const cfg = getNativeListIndentConfig_(item, listType);
-  const EXPECTED_START = (cfg.left + cfg.hanging) * 72;
-  const EXPECTED_FIRST = cfg.left * 72;
-  const TOLERANCE = 1.5;
-
-  try {
-    return (
-      Math.abs(Number(item.getIndentStart()) - EXPECTED_START) <= TOLERANCE &&
-      Math.abs(Number(item.getIndentFirstLine()) - EXPECTED_FIRST) <= TOLERANCE
-    );
-  } catch (e) {
-    return false;
-  }
-}
-
-function getNativeListOrdinalReadOnly_(targetItem) {
-  const body = getActiveBody_();
-  let count = 0;
-  let targetListId = '';
-
-  try {
-    targetListId = targetItem.getListId();
-  } catch (e) {
-    return 0;
-  }
-
-  if (!targetListId) return 0;
-
-  for (let i = 0; i < body.getNumChildren(); i++) {
-    const child = body.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.LIST_ITEM) continue;
-
-    const item = child.asListItem();
-
-    try {
-      if (item.getListId() === targetListId) count++;
-      if (item === targetItem) return count;
-    } catch (e) {}
-  }
-
-  return count;
-}
-
-function numberToLetters_(number) {
-  let n = Math.max(1, Number(number) || 1);
-  let result = '';
-
-  while (n > 0) {
-    n--;
-    result = String.fromCharCode(97 + (n % 26)) + result;
-    n = Math.floor(n / 26);
-  }
-
-  return result;
-}
-
-function lettersToNumber_(letters) {
-  const value = String(letters || '').toLowerCase();
-  let result = 0;
-
-  for (let i = 0; i < value.length; i++) {
-    const code = value.charCodeAt(i) - 96;
-    if (code < 1 || code > 26) return 0;
-    result = result * 26 + code;
-  }
-
-  return result;
-}
-
-function numberToRoman_(number) {
-  let n = Math.max(1, Number(number) || 1);
-  const map = [
-    [1000,'M'],[900,'CM'],[500,'D'],[400,'CD'],
-    [100,'C'],[90,'XC'],[50,'L'],[40,'XL'],
-    [10,'X'],[9,'IX'],[5,'V'],[4,'IV'],[1,'I']
-  ];
-
-  let result = '';
-
-  map.forEach(pair => {
-    while (n >= pair[0]) {
-      result += pair[1];
-      n -= pair[0];
-    }
-  });
-
-  return result;
-}
-
-function romanToNumber_(roman) {
-  const value = String(roman || '').toUpperCase();
-  const values = {I:1,V:5,X:10,L:50,C:100,D:500,M:1000};
-  let total = 0;
-  let previous = 0;
-
-  for (let i = value.length - 1; i >= 0; i--) {
-    const current = values[value[i]] || 0;
-    if (!current) return 0;
-
-    if (current < previous) total -= current;
-    else {
-      total += current;
-      previous = current;
-    }
-  }
-
-  return total;
-}
-
-function stripAnyListPrefixText_(value) {
-  let text = String(value || '');
-
-  text = text.replace(/^\s*[•●○▪◦‣⁃-]\s+/, '');
-  text = text.replace(/^\s*\d+[.)]\s+/, '');
-  text = text.replace(/^\s*[A-Za-z]+[.)]\s+/, '');
-  text = text.replace(/^\s*[ivxlcdm]+[.)]\s+/i, '');
-
-  return text;
-}
-
-/**
- * Used by Full Smart Format.
- * Preserves an existing visible ordinal when one is already present.
- */
-function applyListFormatToParagraph_(p, type) {
-  if (isExistingNativeListOfType_(p, type)) {
-    normalizeExistingNativeListParagraph_(p, type);
-    return p;
-  }
-
-  const original = p.getText();
-  const paragraph = recreateAsParagraph_(p);
-
-  applyNamedStyleToParagraph_(paragraph, 'NORMAL');
-
-  const content = stripAnyListPrefixText_(original).trim();
-
-  if (type === 'BULLET') {
-    // Full Smart Format must also create a REAL bullet, not a text character.
-    const item = convertToSafeNativeBullet_(paragraph, null);
-    normalizeExistingNativeListParagraph_(item, 'BULLET');
-    return item;
-  } else if (type === 'NUMBER') {
-    const n = getManualListOrdinal_(original, 'NUMBER') || 1;
-    paragraph.setText(String(n) + '. ' + content);
-  } else if (type === 'LETTER') {
-    const n = getManualListOrdinal_(original, 'LETTER') || 1;
-    paragraph.setText(numberToLetters_(n) + ') ' + content);
-  } else if (type === 'ROMAN') {
-    const n = getManualListOrdinal_(original, 'ROMAN') || 1;
-    paragraph.setText(numberToRoman_(n).toLowerCase() + '. ' + content);
-  }
-
-  normalizeManualListParagraph_(paragraph);
-  applyListIndents_(paragraph);
-  return paragraph;
-}
-
 function insertBreak(kind) {
   const doc = DocumentApp.getActiveDocument();
   const cursor = doc.getCursor();
@@ -2008,28 +1300,95 @@ function getNextEquationNumberBeforeIndex_(body, targetIndex) {
 }
 
 function formatSelectedTable() {
+  const started = Date.now();
   const table = getActiveTable_();
-  if (!table) throw new Error('Table formatting is only allowed when the cursor/selection is entirely inside one table.');
+
+  if (!table) {
+    throw new Error(
+      'Table formatting is only allowed when the cursor/selection is entirely inside one table.'
+    );
+  }
+
+  const PT_PER_IN = 72;
+  const attribute = DocumentApp.Attribute;
+
+  const cellAttributes = {};
+  cellAttributes[attribute.VERTICAL_ALIGNMENT] =
+    DocumentApp.VerticalAlignment.CENTER;
+  cellAttributes[attribute.PADDING_TOP] = 0.028 * PT_PER_IN;
+  cellAttributes[attribute.PADDING_BOTTOM] = 0.028 * PT_PER_IN;
+  cellAttributes[attribute.PADDING_LEFT] = 0.028 * PT_PER_IN;
+  cellAttributes[attribute.PADDING_RIGHT] = 0.028 * PT_PER_IN;
+
+  const headerParagraphAttributes =
+    buildTableParagraphAttributes_(true, false, PT_PER_IN);
+  const bodyParagraphAttributes =
+    buildTableParagraphAttributes_(false, false, PT_PER_IN);
+  const headerListAttributes =
+    buildTableParagraphAttributes_(true, true, PT_PER_IN);
+  const bodyListAttributes =
+    buildTableParagraphAttributes_(false, true, PT_PER_IN);
 
   table.setBorderColor('#000000');
   table.setBorderWidth(1);
 
-  for (let r = 0; r < table.getNumRows(); r++) {
-    const row = table.getRow(r);
-    row.setMinimumHeight(0.49 * 72);
+  const rows = table.getNumRows();
+  let cells = 0;
+  let paragraphs = 0;
+  let listItems = 0;
 
-    for (let c = 0; c < row.getNumCells(); c++) {
-      const cell = row.getCell(c);
-      cell.setVerticalAlignment(DocumentApp.VerticalAlignment.CENTER);
-      cell.setPaddingTop(0.028 * 72);
-      cell.setPaddingBottom(0.028 * 72);
-      cell.setPaddingLeft(0.028 * 72);
-      cell.setPaddingRight(0.028 * 72);
+  for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
+    const row = table.getRow(rowIndex);
+    const isHeader = rowIndex === 0;
+
+    row.setMinimumHeight(0.49 * PT_PER_IN);
+
+    const paragraphAttributes = isHeader
+      ? headerParagraphAttributes
+      : bodyParagraphAttributes;
+    const listAttributes = isHeader
+      ? headerListAttributes
+      : bodyListAttributes;
+
+    const cellCount = row.getNumCells();
+    cells += cellCount;
+
+    for (let cellIndex = 0; cellIndex < cellCount; cellIndex++) {
+      const cell = row.getCell(cellIndex);
+
+      cell.setAttributes(cellAttributes);
       cell.setBackgroundColor(null);
-      formatTableCellContent_(cell, r === 0);
+
+      for (
+        let childIndex = 0;
+        childIndex < cell.getNumChildren();
+        childIndex++
+      ) {
+        const child = cell.getChild(childIndex);
+        const type = child.getType();
+
+        if (type === DocumentApp.ElementType.PARAGRAPH) {
+          child.asParagraph().setAttributes(paragraphAttributes);
+          paragraphs++;
+        } else if (type === DocumentApp.ElementType.LIST_ITEM) {
+          child.asListItem().setAttributes(listAttributes);
+          listItems++;
+        }
+      }
     }
   }
-  return {ok:true, rows:table.getNumRows()};
+
+  return {
+    ok: true,
+    rows: rows,
+    cells: cells,
+    paragraphs: paragraphs,
+    listItems: listItems,
+    listIndentLeftInches: 0,
+    listHangingInches: 0.10,
+    usesDocsApi: false,
+    elapsedMs: Date.now() - started
+  };
 }
 
 function getActiveTable_() {
@@ -2043,14 +1402,11 @@ function getActiveTable_() {
     for (let i = 0; i < ranges.length; i++) {
       const table = findAncestorTable_(ranges[i].getElement());
 
-      // Safety: if even one selected element is outside a table,
-      // do not guess which table the user intended.
       if (!table) return null;
 
       if (!foundTable) {
         foundTable = table;
       } else if (table !== foundTable) {
-        // Safety: selection spans more than one table.
         return null;
       }
     }
@@ -2059,59 +1415,58 @@ function getActiveTable_() {
   }
 
   const cursor = doc.getCursor();
-  if (cursor) {
-    return findAncestorTable_(cursor.getElement());
-  }
-
-  return null;
+  return cursor ? findAncestorTable_(cursor.getElement()) : null;
 }
 
-function findAncestorTable_(el) {
-  while (el) {
-    if (el.getType && el.getType() === DocumentApp.ElementType.TABLE) return el.asTable();
-    el = el.getParent ? el.getParent() : null;
-  }
-  return null;
-}
+function findAncestorTable_(element) {
+  let current = element;
 
-function formatTableCellContent_(cell, isHeader) {
-  for (let i = 0; i < cell.getNumChildren(); i++) {
-    const child = cell.getChild(i);
-    const type = child.getType();
-    if (type === DocumentApp.ElementType.PARAGRAPH) {
-      const p = child.asParagraph();
-      p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
-      p.setLineSpacing(1);
-      p.setSpacingBefore(0);
-      p.setSpacingAfter(0);
-
-      // Table cell paragraph indentation:
-      // Left 0.05 in, Right 0 in, Special indent None.
-      const tableLeftIndentPt = 0.05 * 72;
-      p.setIndentStart(tableLeftIndentPt);
-      p.setIndentEnd(0);
-      p.setIndentFirstLine(tableLeftIndentPt);
-
-      const t = p.editAsText();
-      t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
-    } else if (type === DocumentApp.ElementType.LIST_ITEM) {
-      const p = child.asListItem();
-      p.setAlignment(isHeader ? DocumentApp.HorizontalAlignment.CENTER : DocumentApp.HorizontalAlignment.LEFT);
-      p.setLineSpacing(1);
-      p.setSpacingBefore(0);
-      p.setSpacingAfter(0);
-
-      // Table cell paragraph indentation:
-      // Left 0.05 in, Right 0 in, Special indent None.
-      const tableLeftIndentPt = 0.05 * 72;
-      p.setIndentStart(tableLeftIndentPt);
-      p.setIndentEnd(0);
-      p.setIndentFirstLine(tableLeftIndentPt);
-
-      const t = p.editAsText();
-      t.setFontFamily('Arial').setFontSize(9).setBold(isHeader);
+  while (current) {
+    if (
+      current.getType &&
+      current.getType() === DocumentApp.ElementType.TABLE
+    ) {
+      return current.asTable();
     }
+
+    current = current.getParent ? current.getParent() : null;
   }
+
+  return null;
+}
+
+function buildTableParagraphAttributes_(
+  isHeader,
+  isListItem,
+  pointsPerInch
+) {
+  const attribute = DocumentApp.Attribute;
+  const attributes = {};
+
+  attributes[attribute.HORIZONTAL_ALIGNMENT] = isHeader
+    ? DocumentApp.HorizontalAlignment.CENTER
+    : DocumentApp.HorizontalAlignment.LEFT;
+  attributes[attribute.LINE_SPACING] = 1;
+  attributes[attribute.SPACING_BEFORE] = 0;
+  attributes[attribute.SPACING_AFTER] = 0;
+  attributes[attribute.INDENT_END] = 0;
+
+  if (isListItem) {
+    // Left = 0 in; Hanging = 0.10 in.
+    attributes[attribute.INDENT_FIRST_LINE] = 0;
+    attributes[attribute.INDENT_START] = 0.10 * pointsPerInch;
+  } else {
+    // Left = 0.05 in; Special indent = None.
+    const paragraphIndent = 0.05 * pointsPerInch;
+    attributes[attribute.INDENT_FIRST_LINE] = paragraphIndent;
+    attributes[attribute.INDENT_START] = paragraphIndent;
+  }
+
+  attributes[attribute.FONT_FAMILY] = 'Arial';
+  attributes[attribute.FONT_SIZE] = 9;
+  attributes[attribute.BOLD] = Boolean(isHeader);
+
+  return attributes;
 }
 
 
@@ -2982,50 +2337,65 @@ function smartFormatSelection() {
   let captions = 0;
   let notes = 0;
   let normal = 0;
-  const inheritedStyleAssignments = [];
+  const styleAssignments = [];
+  const body = getActiveBody_();
+  let activeListAnchor = null;
+  let activeListType = '';
+  let previousItemIndex = -1;
 
   items.forEach(item => {
     let p = targetById[item.id];
     if (!p) return;
 
     const type = typeById[item.id];
+    const isListType = ['bullet', 'number', 'letter', 'roman'].indexOf(type) >= 0;
+    const itemIndex = parseInt(String(item.id).substring(1), 10);
+    const isContiguous = previousItemIndex >= 0 && itemIndex === previousItemIndex + 1;
+
+    if (!isListType || !isContiguous) {
+      activeListAnchor = null;
+      activeListType = '';
+    }
 
     switch (type) {
       case 'heading1':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H1'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H1'}); headings++; break;
       case 'heading2':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H2'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H2'}); headings++; break;
       case 'heading3':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H3'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H3'}); headings++; break;
       case 'heading4':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H4'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H4'}); headings++; break;
       case 'heading5':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H5'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H5'}); headings++; break;
       case 'heading6':
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'H6'}); headings++; break;
+        styleAssignments.push({paragraph: p, styleName: 'H6'}); headings++; break;
 
       case 'bullet':
-        stripManualListPrefix_(p, 'BULLET');
-        applyListFormatToParagraph_(p, 'BULLET');
-        lists++;
-        break;
-
       case 'number':
-        stripManualListPrefix_(p, 'NUMBER');
-        applyListFormatToParagraph_(p, 'NUMBER');
-        lists++;
-        break;
-
       case 'letter':
-        applyListFormatToParagraph_(p, 'LETTER');
-        lists++;
-        break;
+      case 'roman': {
+        const listType = type.toUpperCase();
+        const continuationAnchor = activeListType === listType
+          ? activeListAnchor
+          : null;
 
-      case 'roman':
-        stripManualListPrefix_(p, 'ROMAN');
-        applyListFormatToParagraph_(p, 'ROMAN');
+        stripManualListPrefix_(p, listType);
+
+        const listResult = applyFastNativeListToParagraphs_(
+          body,
+          [p],
+          listType,
+          continuationAnchor
+        );
+
+        p = listResult.listItems[0];
+        targetById[item.id] = p;
+        activeListAnchor = listResult.firstListItem;
+        activeListType = listType;
         lists++;
         break;
+      }
 
       case 'figure_caption':
       case 'table_caption': {
@@ -3038,7 +2408,7 @@ function smartFormatSelection() {
         } else {
           // If Gemini inferred a caption without an explicit prefix, do not
           // invent whether it is Figure/Table here; keep the content safe.
-          inheritedStyleAssignments.push({paragraph: p, styleName: 'NORMAL'});
+          styleAssignments.push({paragraph: p, styleName: 'NORMAL'});
           normal++;
         }
         break;
@@ -3051,15 +2421,20 @@ function smartFormatSelection() {
 
       case 'normal':
       default:
-        inheritedStyleAssignments.push({paragraph: p, styleName: 'NORMAL'});
+        styleAssignments.push({paragraph: p, styleName: 'NORMAL'});
         normal++;
         break;
     }
 
     formatted++;
+    previousItemIndex = itemIndex;
   });
 
-  applyInheritedNamedStyles_(inheritedStyleAssignments, true);
+  styleAssignments.forEach(assignment => {
+    applyStyleToParagraph_(assignment.paragraph, assignment.styleName);
+  });
+
+  DocumentApp.getActiveDocument().saveAndClose();
 
   return {
     ok: true,

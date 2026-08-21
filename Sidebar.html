@@ -22,26 +22,25 @@
   <main>
     <section id="formatPanel">
       <div class="context" id="selectionContext">Checking selection…</div>
-<div class="group">
-  <label>TEST LAB</label>
+      <div class="group">
+        <label>TEST LAB</label>
 
-  <button
-    id="testRunButton"
-    class="wide btn-technical"
-    onclick="runCurrentTestUi(event)">
-    🧪 Run current test
-  </button>
+        <button
+          id="testRunButton"
+          class="wide btn-technical"
+          onclick="runCurrentTestUi(event)">
+          🧪 Run current test
+        </button>
 
-  <div class="smartHint">
-    Place the cursor inside one paragraph without selecting text.
-    Test logic is isolated in TestFunctions.gs.
-  </div>
+        <div class="smartHint">
+          Runs the isolated function currently configured in TestFunctions.gs.
+        </div>
 
-  <textarea
-    id="testOutput"
-    class="result"
-    readonly>No test has been run.</textarea>
-</div>
+        <textarea
+          id="testOutput"
+          class="result"
+          readonly>No test has been run.</textarea>
+      </div>
       <div class="group smartFormatGroup">
         <label>SMART FORMAT</label>
         <button class="wide btn-fullformat" onclick="fullSmartFormat(event)">✦ Format complete selection</button>
