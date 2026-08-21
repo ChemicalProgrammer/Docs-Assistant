@@ -4,7 +4,109 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testLocateParagraphWithApi_();
+  return testResetH4AtKnownRange_();
+}
+
+/**
+ * TEST 004
+ * Aplica H4 y elimina overrides usando un rango API ya conocido.
+ * No ejecuta Docs.Documents.get().
+ */
+function testResetH4AtKnownRange_() {
+  const started = Date.now();
+  const documentId = DocumentApp
+    .getActiveDocument()
+    .getId();
+
+  // Rango obtenido en TEST-003.
+  const paragraphRange = {
+    startIndex: 29973,
+    endIndex: 30003
+  };
+
+  /*
+   * Excluimos el salto de línea final para que UpdateTextStyle
+   * actúe únicamente sobre el contenido del párrafo.
+   */
+  const textRange = {
+    startIndex: 29973,
+    endIndex: 30002
+  };
+
+  const paragraphFields = [
+    'namedStyleType',
+    'alignment',
+    'lineSpacing',
+    'spacingMode',
+    'spaceAbove',
+    'spaceBelow',
+    'borderBetween',
+    'borderTop',
+    'borderBottom',
+    'borderLeft',
+    'borderRight',
+    'indentFirstLine',
+    'indentStart',
+    'indentEnd',
+    'tabStops',
+    'keepLinesTogether',
+    'keepWithNext',
+    'avoidWidowAndOrphan',
+    'shading',
+    'pageBreakBefore'
+  ].join(',');
+
+  const textFields = [
+    'bold',
+    'italic',
+    'underline',
+    'strikethrough',
+    'smallCaps',
+    'backgroundColor',
+    'foregroundColor',
+    'fontSize',
+    'weightedFontFamily',
+    'baselineOffset'
+  ].join(',');
+
+  const apiStarted = Date.now();
+
+  Docs.Documents.batchUpdate(
+    {
+      requests: [
+        {
+          updateParagraphStyle: {
+            range: paragraphRange,
+            paragraphStyle: {
+              namedStyleType: 'HEADING_4'
+            },
+            fields: paragraphFields
+          }
+        },
+        {
+          updateTextStyle: {
+            range: textRange,
+            textStyle: {},
+            fields: textFields
+          }
+        }
+      ]
+    },
+    documentId
+  );
+
+  const apiWriteMs = Date.now() - apiStarted;
+
+  return {
+    ok: true,
+    testId: 'TEST-004-RESET-H4-KNOWN-RANGE',
+    startIndex: paragraphRange.startIndex,
+    endIndex: paragraphRange.endIndex,
+    apiReadMs: 0,
+    apiWriteMs: apiWriteMs,
+    elapsedMs: Date.now() - started,
+    message: 'H4 and override reset requests were completed.'
+  };
 }
 
 /**
