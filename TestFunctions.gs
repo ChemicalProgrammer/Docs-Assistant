@@ -4,7 +4,69 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testNativeHeading4_();
+  return testApplyHeading4Attributes_();
+}
+
+/**
+ * TEST 002
+ * Obtiene la configuración actual de Heading 4 del documento y la aplica
+ * explícitamente al párrafo.
+ *
+ * Es una prueba diagnóstica: sí crea formato directo.
+ */
+function testApplyHeading4Attributes_() {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const cursor = doc.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'No cursor detected. Click inside one paragraph without selecting text.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error(
+      'The cursor is not inside a Paragraph or ListItem.'
+    );
+  }
+
+  let body = doc.getBody();
+
+  try {
+    const tab = doc.getActiveTab();
+
+    if (tab && typeof tab.asDocumentTab === 'function') {
+      body = tab.asDocumentTab().getBody();
+    }
+  } catch (error) {}
+
+  const target = DocumentApp.ParagraphHeading.HEADING4;
+  const styleAttributes = body.getHeadingAttributes(target);
+
+  paragraph.setHeading(target);
+  paragraph.setAttributes(styleAttributes);
+
+  return {
+    ok: paragraph.getHeading() === target,
+    testId: 'TEST-002-H4-EFFECTIVE-ATTRIBUTES',
+    operation: 'setHeading(H4) + setAttributes(document H4)',
+    after: String(paragraph.getHeading()),
+    attributeCount: Object.keys(styleAttributes).length,
+    fontFamily:
+      styleAttributes[DocumentApp.Attribute.FONT_FAMILY] || null,
+    fontSize:
+      styleAttributes[DocumentApp.Attribute.FONT_SIZE] || null,
+    bold:
+      styleAttributes[DocumentApp.Attribute.BOLD],
+    foregroundColor:
+      styleAttributes[DocumentApp.Attribute.FOREGROUND_COLOR] || null,
+    elapsedMs: Date.now() - started,
+    message:
+      'The document H4 attributes were applied explicitly. Check the visual result.'
+  };
 }
 
 /**
