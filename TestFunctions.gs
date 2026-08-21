@@ -1,478 +1,558 @@
 /**
- * ============================================
- * SOLUCIÓN SIMPLE (RECOMENDADA PARA LA MAYORÍA)
- * ============================================
+ * TEST LAB
+ *
+ * El botón de pruebas ejecuta siempre esta función.
  */
-
-/**
- * Convierte las líneas seleccionadas en incisos a), b), c)
- * Usa la API estándar de DocumentApp - No requiere configuraciones adicionales
- */
-function aplicarIncisosSimple() {
-  const doc = DocumentApp.getActiveDocument();
-  const selection = doc.getSelection();
-  
-  if (!selection) {
-    DocumentApp.getUi().alert(
-      'Por favor, selecciona el texto que deseas convertir en incisos.'
-    );
-    return;
-  }
-  
-  const elements = selection.getRangeElements();
-  let textoCompleto = '';
-  
-  // Extraer todo el texto de la selección
-  for (let element of elements) {
-    const el = element.getElement();
-    if (el.getType() === DocumentApp.ElementType.TEXT) {
-      textoCompleto += el.asText().getText();
-    } else if (el.getType() === DocumentApp.ElementType.PARAGRAPH) {
-      textoCompleto += el.asParagraph().getText();
-    } else if (el.getType() === DocumentApp.ElementType.LIST_ITEM) {
-      textoCompleto += el.asListItem().getText();
-    }
-  }
-  
-  // Dividir en líneas y limpiar
-  const lineas = textoCompleto
-    .split('\n')
-    .map(linea => linea.trim())
-    .filter(linea => linea.length > 0);
-  
-  if (lineas.length === 0) {
-    DocumentApp.getUi().alert('No se encontraron líneas para convertir.');
-    return;
-  }
-  
-  // Generar texto con incisos
-  const letras = 'abcdefghijklmnopqrstuvwxyz';
-  let nuevoTexto = '';
-  
-  for (let i = 0; i < lineas.length; i++) {
-    let letra;
-    if (i < letras.length) {
-      letra = letras[i];
-    } else {
-      // Para más de 26 incisos
-      const primera = letras[Math.floor(i / 26) - 1] || '';
-      const segunda = letras[i % 26];
-      letra = primera + segunda;
-    }
-    nuevoTexto += `${letra}) ${lineas[i]}\n`;
-  }
-  
-  // Reemplazar el texto seleccionado
-  try {
-    const firstElement = elements[0].getElement();
-    const lastElement = elements[elements.length - 1].getElement();
-    
-    // Si es un solo elemento de texto
-    if (firstElement === lastElement && firstElement.getType() === DocumentApp.ElementType.TEXT) {
-      const text = firstElement.asText();
-      const startOffset = elements[0].getStartOffset();
-      const endOffset = elements[elements.length - 1].getEndOffsetInclusive();
-      text.deleteText(startOffset, endOffset);
-      text.insertText(startOffset, nuevoTexto);
-    } else {
-      // Para selecciones múltiples, reemplazar todo el contenido
-      // Primero, obtener el rango completo
-      const body = doc.getBody();
-      const firstIndex = body.getChildIndex(firstElement);
-      const lastIndex = body.getChildIndex(lastElement);
-      
-      // Eliminar todos los elementos en el rango
-      for (let i = lastIndex; i >= firstIndex; i--) {
-        const child = body.getChild(i);
-        if (child) {
-          child.removeFromParent();
-        }
-      }
-      
-      // Insertar el nuevo texto como un solo párrafo
-      body.insertParagraph(firstIndex, nuevoTexto);
-    }
-    
-    DocumentApp.getUi().alert(`✅ ${lineas.length} líneas convertidas a incisos.`);
-  } catch (error) {
-    DocumentApp.getUi().alert('Error al reemplazar el texto: ' + error.toString());
-  }
+function runCurrentTest() {
+  return testApplyNativeIncisos_();
 }
 
 /**
- * Versión mejorada que preserva el formato de los párrafos
- * Convierte cada párrafo en un LIST_ITEM con formato de inciso
+ * Aplica una lista automática nativa:
+ *
+ * a) Primer párrafo
+ * b) Segundo párrafo
+ * c) Tercer párrafo
+ *
+ * Funciona con:
+ * - Uno o varios párrafos seleccionados.
+ * - El párrafo donde está colocado el cursor.
+ *
+ * Sangrías:
+ * - Left: 0.25"
+ * - Hanging: 0.25"
+ * - Right: 0"
  */
-function aplicarIncisosConFormato() {
-  const doc = DocumentApp.getActiveDocument();
-  const selection = doc.getSelection();
-  
-  if (!selection) {
-    DocumentApp.getUi().alert('Por favor, selecciona los párrafos a convertir.');
-    return;
+function testApplyNativeIncisos_() {
+  const started = Date.now();
+
+  if (
+    typeof Docs === 'undefined' ||
+    !Docs.Documents
+  ) {
+    throw new Error(
+      'Activa el servicio avanzado Google Docs API.'
+    );
   }
-  
-  const elements = selection.getRangeElements();
-  const paragraphs = [];
-  
-  // Obtener todos los párrafos en la selección
-  for (let element of elements) {
-    let el = element.getElement();
-    let paragraph = null;
-    
-    // Buscar el párrafo padre
-    while (el) {
-      const type = el.getType();
-      if (type === DocumentApp.ElementType.PARAGRAPH || 
-          type === DocumentApp.ElementType.LIST_ITEM) {
-        paragraph = el;
+
+  const doc = DocumentApp.getActiveDocument();
+  const documentId = doc.getId();
+
+  const activeTab = doc.getActiveTab();
+
+  if (!activeTab) {
+    throw new Error(
+      'No se pudo obtener el tab activo.'
+    );
+  }
+
+  const tabId = activeTab.getId();
+  const documentTab = activeTab.asDocumentTab();
+  const body = documentTab.getBody();
+
+  const paragraphs =
+    incisoGetTargetParagraphs_(doc, body);
+
+  const paragraphCount = paragraphs.length;
+
+  if (!paragraphCount) {
+    throw new Error(
+      'Selecciona párrafos o coloca el cursor dentro de un párrafo.'
+    );
+  }
+
+  /*
+   * Crear un named range para cada párrafo.
+   *
+   * Los marcadores permitirán recuperar los mismos párrafos después
+   * de utilizar Docs API y volver a abrir el documento.
+   */
+  const markers = [];
+
+  const markerPrefix =
+    'DA_INCISO_' +
+    Utilities.getUuid().replace(/-/g, '') +
+    '_';
+
+  paragraphs.forEach(function (paragraph, index) {
+    const markerName = markerPrefix + index;
+
+    const range = documentTab
+      .newRange()
+      .addElement(paragraph)
+      .build();
+
+    documentTab.addNamedRange(
+      markerName,
+      range
+    );
+
+    markers.push({
+      name: markerName
+    });
+  });
+
+  /*
+   * Publicar los named ranges antes de llamar Docs API.
+   *
+   * La instancia doc queda cerrada después de esta instrucción.
+   */
+  doc.saveAndClose();
+
+  const apiStarted = Date.now();
+
+  /*
+   * Obtener solamente los named ranges.
+   *
+   * No se solicita el contenido completo del documento.
+   */
+  const apiDocument = Docs.Documents.get(
+    documentId,
+    {
+      includeTabsContent: true,
+      fields:
+        'tabs(tabProperties(tabId),documentTab(namedRanges))'
+    }
+  );
+
+  const apiTab = incisoFindApiTab_(
+    apiDocument.tabs || [],
+    tabId
+  );
+
+  if (!apiTab || !apiTab.documentTab) {
+    throw new Error(
+      'Google Docs API no devolvió el tab activo.'
+    );
+  }
+
+  const apiNamedRanges =
+    apiTab.documentTab.namedRanges || {};
+
+  /*
+   * Obtener el startIndex y endIndex de cada párrafo.
+   */
+  const locatedRanges = markers.map(function (marker) {
+    const namedRangeGroup =
+      apiNamedRanges[marker.name];
+
+    if (
+      !namedRangeGroup ||
+      !namedRangeGroup.namedRanges ||
+      !namedRangeGroup.namedRanges.length
+    ) {
+      throw new Error(
+        'No se encontró el marcador temporal: ' +
+        marker.name
+      );
+    }
+
+    const apiNamedRange =
+      namedRangeGroup.namedRanges[0];
+
+    if (
+      !apiNamedRange.ranges ||
+      !apiNamedRange.ranges.length
+    ) {
+      throw new Error(
+        'El marcador temporal no contiene un rango.'
+      );
+    }
+
+    const range = apiNamedRange.ranges[0];
+
+    const startIndex =
+      Number(range.startIndex);
+
+    const endIndex =
+      Number(range.endIndex);
+
+    if (
+      !Number.isFinite(startIndex) ||
+      !Number.isFinite(endIndex)
+    ) {
+      throw new Error(
+        'El marcador temporal no contiene índices válidos.'
+      );
+    }
+
+    return {
+      startIndex: startIndex,
+      endIndex: endIndex,
+      tabId: tabId
+    };
+  });
+
+  /*
+   * Crear un solo rango que incluya todos los párrafos.
+   */
+  const startIndex = Math.min.apply(
+    null,
+    locatedRanges.map(function (range) {
+      return range.startIndex;
+    })
+  );
+
+  const endIndex = Math.max.apply(
+    null,
+    locatedRanges.map(function (range) {
+      return range.endIndex;
+    })
+  );
+
+  const targetRange = {
+    startIndex: startIndex,
+    endIndex: endIndex,
+    tabId: tabId
+  };
+
+  /*
+   * Crear una lista automática con el preset:
+   *
+   * Nivel 0 = 1)
+   * Nivel 1 = a)
+   * Nivel 2 = i)
+   *
+   * Docs API crea inicialmente los elementos en el nivel 0.
+   */
+  Docs.Documents.batchUpdate(
+    {
+      requests: [
+        {
+          deleteParagraphBullets: {
+            range: targetRange
+          }
+        },
+        {
+          createParagraphBullets: {
+            range: targetRange,
+            bulletPreset:
+              'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
+          }
+        }
+      ]
+    },
+    documentId
+  );
+
+  const apiMs = Date.now() - apiStarted;
+
+  /*
+   * Volver a abrir el documento.
+   *
+   * No se reutiliza la instancia cerrada anteriormente.
+   */
+  const reopenedDocument =
+    DocumentApp.openById(documentId);
+
+  const reopenedTabObject =
+    reopenedDocument.getTab(tabId);
+
+  if (!reopenedTabObject) {
+    throw new Error(
+      'No se pudo volver a abrir el tab activo.'
+    );
+  }
+
+  const reopenedTab =
+    reopenedTabObject.asDocumentTab();
+
+  let paragraphsApplied = 0;
+
+  /*
+   * Recuperar cada ListItem utilizando su named range.
+   */
+  markers.forEach(function (marker) {
+    const namedRanges =
+      reopenedTab.getNamedRanges(marker.name);
+
+    if (
+      !namedRanges ||
+      !namedRanges.length
+    ) {
+      throw new Error(
+        'No se pudo recuperar el marcador: ' +
+        marker.name
+      );
+    }
+
+    const namedRange = namedRanges[0];
+
+    const rangeElements =
+      namedRange
+        .getRange()
+        .getRangeElements();
+
+    let listItem = null;
+
+    for (
+      let index = 0;
+      index < rangeElements.length;
+      index++
+    ) {
+      const paragraph = incisoFindParagraph_(
+        rangeElements[index].getElement()
+      );
+
+      if (
+        paragraph &&
+        paragraph.getType() ===
+          DocumentApp.ElementType.LIST_ITEM
+      ) {
+        listItem = paragraph.asListItem();
         break;
       }
-      el = el.getParent();
     }
-    
-    if (paragraph) {
-      const index = doc.getBody().getChildIndex(paragraph);
-      if (index !== -1 && !paragraphs.includes(paragraph)) {
-        paragraphs.push(paragraph);
-      }
+
+    if (!listItem) {
+      throw new Error(
+        'El párrafo no fue convertido en un ListItem.'
+      );
     }
-  }
-  
-  if (paragraphs.length === 0) {
-    DocumentApp.getUi().alert('No se encontraron párrafos para convertir.');
-    return;
-  }
-  
-  // Ordenar por posición
-  paragraphs.sort((a, b) => {
-    return doc.getBody().getChildIndex(a) - doc.getBody().getChildIndex(b);
+
+    /*
+     * Mover el elemento al nivel 1 del preset.
+     *
+     * Nivel 0 = 1)
+     * Nivel 1 = a)
+     */
+    listItem.setNestingLevel(1);
+
+    /*
+     * Aplicar las sangrías solicitadas.
+     *
+     * 18 puntos = 0.25 pulgadas.
+     *
+     * indentStart:     36 pt
+     * indentFirstLine: 18 pt
+     * indentEnd:        0 pt
+     */
+    listItem.setIndentStart(36);
+    listItem.setIndentFirstLine(18);
+    listItem.setIndentEnd(0);
+
+    /*
+     * Eliminar el marcador temporal.
+     */
+    namedRange.remove();
+
+    paragraphsApplied++;
   });
-  
-  // Convertir cada párrafo a LIST_ITEM con inciso
-  const letras = 'abcdefghijklmnopqrstuvwxyz';
-  
-  for (let i = 0; i < paragraphs.length; i++) {
-    const paragraph = paragraphs[i];
-    const texto = paragraph.getText();
-    
-    // Obtener la letra correspondiente
-    let letra;
-    if (i < letras.length) {
-      letra = letras[i];
-    } else {
-      const primera = letras[Math.floor(i / 26) - 1] || '';
-      const segunda = letras[i % 26];
-      letra = primera + segunda;
-    }
-    
-    // Crear un nuevo LIST_ITEM
-    const body = doc.getBody();
-    const index = body.getChildIndex(paragraph);
-    
-    // Crear el nuevo elemento LIST_ITEM
-    const listItem = body.insertListItem(index, `${letra}) ${texto}`);
-    
-    // Configurar el formato de lista
-    listItem.setGlyphType(DocumentApp.GlyphType.LOWER_ALPHA);
-    listItem.setNestingLevel(0);
-    
-    // Eliminar el párrafo original
-    paragraph.removeFromParent();
-  }
-  
-  DocumentApp.getUi().alert(`✅ ${paragraphs.length} párrafos convertidos a incisos.`);
-}
 
+  reopenedDocument.saveAndClose();
 
-/**
- * ============================================
- * SOLUCIÓN AVANZADA (CON GOOGLE DOCS API)
- * ============================================
- * NOTA: Requiere activar el servicio Google Docs API
- * Extensiones → Apps Script → Servicios → Google Docs API
- */
-
-/**
- * Aplica incisos usando la Google Docs API
- * Mayor control sobre el formato y sangrías
- */
-function aplicarIncisosAvanzado() {
-  // Verificar que el servicio esté activo
-  if (typeof Docs === 'undefined' || !Docs.Documents) {
-    DocumentApp.getUi().alert(
-      '❌ Error: Activa el servicio "Google Docs API" en:\n' +
-      'Extensiones → Apps Script → Servicios'
-    );
-    return;
-  }
-  
-  try {
-    const doc = DocumentApp.getActiveDocument();
-    const documentId = doc.getId();
-    const body = doc.getBody();
-    const selection = doc.getSelection();
-    
-    if (!selection) {
-      DocumentApp.getUi().alert('Por favor, selecciona los párrafos a convertir.');
-      return;
-    }
-    
-    // Obtener los párrafos seleccionados
-    const elements = selection.getRangeElements();
-    const paragraphs = [];
-    
-    for (let element of elements) {
-      let el = element.getElement();
-      while (el) {
-        const type = el.getType();
-        if (type === DocumentApp.ElementType.PARAGRAPH || 
-            type === DocumentApp.ElementType.LIST_ITEM) {
-          const index = body.getChildIndex(el);
-          if (index !== -1 && !paragraphs.includes(el)) {
-            paragraphs.push({
-              element: el,
-              index: index
-            });
-          }
-          break;
-        }
-        el = el.getParent();
-      }
-    }
-    
-    if (paragraphs.length === 0) {
-      DocumentApp.getUi().alert('No se encontraron párrafos.');
-      return;
-    }
-    
-    // Ordenar por índice
-    paragraphs.sort((a, b) => a.index - b.index);
-    
-    // Crear marcadores temporales
-    const markers = [];
-    const markerPrefix = 'INCISO_' + Utilities.getUuid().replace(/-/g, '') + '_';
-    
-    for (let i = 0; i < paragraphs.length; i++) {
-      const markerName = markerPrefix + i;
-      const range = doc.newRange()
-        .addElement(paragraphs[i].element)
-        .build();
-      
-      doc.addNamedRange(markerName, range);
-      markers.push(markerName);
-    }
-    
-    // Guardar cambios para poder usar la API
-    doc.saveAndClose();
-    
-    // Obtener el documento con los marcadores
-    const apiDoc = Docs.Documents.get(documentId, {
-      includeTabsContent: true,
-      fields: 'tabs(documentTab(namedRanges))'
-    });
-    
-    // Encontrar los índices de los párrafos
-    const tabId = doc.getActiveTab().getId();
-    const apiTab = apiDoc.tabs.find(t => 
-      String(t.tabProperties?.tabId) === String(tabId)
-    );
-    
-    if (!apiTab) {
-      throw new Error('No se encontró el tab activo');
-    }
-    
-    const namedRanges = apiTab.documentTab?.namedRanges || {};
-    const ranges = [];
-    
-    for (let marker of markers) {
-      const rangeGroup = namedRanges[marker];
-      if (rangeGroup?.namedRanges?.[0]?.ranges?.[0]) {
-        const range = rangeGroup.namedRanges[0].ranges[0];
-        ranges.push({
-          startIndex: Number(range.startIndex),
-          endIndex: Number(range.endIndex)
-        });
-      }
-    }
-    
-    if (ranges.length === 0) {
-      throw new Error('No se encontraron los marcadores');
-    }
-    
-    const startIndex = Math.min(...ranges.map(r => r.startIndex));
-    const endIndex = Math.max(...ranges.map(r => r.endIndex));
-    const tabIdStr = String(tabId);
-    
-    // Construir las solicitudes a la API
-    const requests = [
-      // Eliminar viñetas existentes
-      {
-        deleteParagraphBullets: {
-          range: {
-            startIndex: startIndex,
-            endIndex: endIndex,
-            tabId: tabIdStr
-          }
-        }
-      },
-      
-      // Insertar tabulaciones para establecer el nivel
-      ...ranges.map(range => ({
-        insertText: {
-          location: {
-            index: range.startIndex,
-            tabId: tabIdStr
-          },
-          text: '\t'
-        }
-      })),
-      
-      // Crear lista con formato a), b), c)
-      {
-        createParagraphBullets: {
-          range: {
-            startIndex: startIndex,
-            endIndex: endIndex + ranges.length,
-            tabId: tabIdStr
-          },
-          bulletPreset: 'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
-        }
-      },
-      
-      // Configurar sangrías
-      {
-        updateParagraphStyle: {
-          range: {
-            startIndex: startIndex,
-            endIndex: endIndex + ranges.length,
-            tabId: tabIdStr
-          },
-          paragraphStyle: {
-            indentStart: { magnitude: 36, unit: 'PT' },
-            indentFirstLine: { magnitude: 18, unit: 'PT' },
-            indentEnd: { magnitude: 0, unit: 'PT' }
-          },
-          fields: 'indentStart,indentFirstLine,indentEnd'
-        }
-      },
-      
-      // Eliminar marcadores
-      ...markers.map(marker => ({
-        deleteNamedRange: {
-          name: marker,
-          tabsCriteria: {
-            tabIds: [tabIdStr]
-          }
-        }
-      }))
-    ];
-    
-    // Ejecutar las solicitudes
-    Docs.Documents.batchUpdate({
-      requests: requests
-    }, documentId);
-    
-    DocumentApp.getUi().alert(`✅ ${ranges.length} párrafos convertidos a incisos.`);
-    
-  } catch (error) {
-    DocumentApp.getUi().alert('❌ Error: ' + error.toString());
-  }
-}
-
-
-/**
- * ============================================
- * MENÚ PERSONALIZADO
- * ============================================
- */
-
-/**
- * Crea un menú en la barra de Google Docs
- * Se ejecuta automáticamente al abrir el documento
- */
-function onOpen() {
-  const ui = DocumentApp.getUi();
-  
-  ui.createMenu('📝 Incisos')
-    .addItem('🔤 Convertir a a), b), c)...', 'aplicarIncisosSimple')
-    .addItem('🎨 Convertir con formato (LIST_ITEM)', 'aplicarIncisosConFormato')
-    .addSeparator()
-    .addItem('⚡ Avanzado (Google Docs API)', 'aplicarIncisosAvanzado')
-    .addToUi();
+  return {
+    ok: true,
+    testId:
+      'TEST-NATIVE-A-PAREN-LEVEL-1',
+    automaticList: true,
+    expectedGlyph: 'a)',
+    nestingLevel: 1,
+    paragraphsApplied: paragraphsApplied,
+    expectedIndentInches: {
+      left: 0.25,
+      hanging: 0.25,
+      right: 0
+    },
+    apiMs: apiMs,
+    elapsedMs: Date.now() - started
+  };
 }
 
 /**
- * Función de prueba rápida
- * Útil para pruebas desde el editor de Apps Script
+ * Obtiene los párrafos completos incluidos en la selección.
+ *
+ * Si no existe una selección, devuelve el párrafo donde está
+ * colocado el cursor.
+ *
+ * También incluye los párrafos vacíos ubicados entre el primer
+ * y el último párrafo seleccionado.
  */
-function testIncisos() {
-  DocumentApp.getUi().alert(
-    'Selecciona el texto en el documento y luego ejecuta:\n' +
-    '- aplicarIncisosSimple()\n' +
-    '- aplicarIncisosConFormato()\n' +
-    '- aplicarIncisosAvanzado()'
-  );
-}
-
-
-/**
- * ============================================
- * FUNCIONES ADICIONALES ÚTILES
- * ============================================
- */
-
-/**
- * Elimina todos los incisos del texto seleccionado
- */
-function eliminarIncisos() {
-  const doc = DocumentApp.getActiveDocument();
+function incisoGetTargetParagraphs_(doc, body) {
   const selection = doc.getSelection();
-  
-  if (!selection) {
-    DocumentApp.getUi().alert('Selecciona el texto con incisos a eliminar.');
-    return;
-  }
-  
-  const elements = selection.getRangeElements();
-  let textoCompleto = '';
-  
-  for (let element of elements) {
-    const el = element.getElement();
-    if (el.getType() === DocumentApp.ElementType.TEXT) {
-      textoCompleto += el.asText().getText();
+  const foundIndexes = {};
+
+  if (selection) {
+    const rangeElements =
+      selection.getRangeElements();
+
+    rangeElements.forEach(function (rangeElement) {
+      const paragraph = incisoFindParagraph_(
+        rangeElement.getElement()
+      );
+
+      if (!paragraph) {
+        return;
+      }
+
+      const childIndex =
+        incisoBodyChildIndex_(
+          body,
+          paragraph
+        );
+
+      if (childIndex >= 0) {
+        foundIndexes[childIndex] = true;
+      }
+    });
+  } else {
+    const cursor = doc.getCursor();
+
+    if (!cursor) {
+      throw new Error(
+        'No se detectó una selección ni un cursor.'
+      );
     }
+
+    const paragraph = incisoFindParagraph_(
+      cursor.getElement()
+    );
+
+    if (!paragraph) {
+      throw new Error(
+        'El cursor no está dentro de un párrafo.'
+      );
+    }
+
+    const childIndex =
+      incisoBodyChildIndex_(
+        body,
+        paragraph
+      );
+
+    if (childIndex < 0) {
+      throw new Error(
+        'Esta prueba solamente admite párrafos del cuerpo principal.'
+      );
+    }
+
+    foundIndexes[childIndex] = true;
   }
-  
-  // Eliminar patrones como "a) ", "b) ", etc.
-  const lineas = textoCompleto.split('\n');
-  const lineasLimpias = lineas.map(linea => {
-    // Eliminar patrones: a) , b) , c) , etc.
-    return linea.replace(/^[a-z]\)\s*/, '').replace(/^[a-z][a-z]\)\s*/, '');
-  });
-  
-  const nuevoTexto = lineasLimpias.join('\n');
-  
-  // Reemplazar el texto
-  const firstElement = elements[0].getElement();
-  if (firstElement.getType() === DocumentApp.ElementType.TEXT) {
-    const text = firstElement.asText();
-    text.setText(nuevoTexto);
-    DocumentApp.getUi().alert('✅ Incisos eliminados.');
+
+  const selectedIndexes =
+    Object.keys(foundIndexes)
+      .map(function (value) {
+        return Number(value);
+      })
+      .sort(function (a, b) {
+        return a - b;
+      });
+
+  if (!selectedIndexes.length) {
+    return [];
+  }
+
+  const firstIndex =
+    selectedIndexes[0];
+
+  const lastIndex =
+    selectedIndexes[
+      selectedIndexes.length - 1
+    ];
+
+  const paragraphs = [];
+
+  /*
+   * Recorrer todos los elementos entre el primero y el último.
+   *
+   * Esto permite incluir párrafos vacíos dentro de la selección.
+   */
+  for (
+    let childIndex = firstIndex;
+    childIndex <= lastIndex;
+    childIndex++
+  ) {
+    const element =
+      body.getChild(childIndex);
+
+    const elementType =
+      element.getType();
+
+    if (
+      elementType ===
+        DocumentApp.ElementType.PARAGRAPH ||
+      elementType ===
+        DocumentApp.ElementType.LIST_ITEM
+    ) {
+      paragraphs.push(element);
+      continue;
+    }
+
+    throw new Error(
+      'La selección contiene un elemento que no es un párrafo.'
+    );
+  }
+
+  return paragraphs;
+}
+
+/**
+ * Busca el Paragraph o ListItem que contiene un elemento.
+ */
+function incisoFindParagraph_(element) {
+  let current = element;
+
+  while (current) {
+    const elementType =
+      current.getType();
+
+    if (
+      elementType ===
+        DocumentApp.ElementType.PARAGRAPH ||
+      elementType ===
+        DocumentApp.ElementType.LIST_ITEM
+    ) {
+      return current;
+    }
+
+    current = current.getParent
+      ? current.getParent()
+      : null;
+  }
+
+  return null;
+}
+
+/**
+ * Obtiene el índice del párrafo dentro del Body.
+ */
+function incisoBodyChildIndex_(
+  body,
+  paragraph
+) {
+  try {
+    return body.getChildIndex(
+      paragraph
+    );
+  } catch (error) {
+    return -1;
   }
 }
 
-
 /**
- * Convierte números a letras para incisos
- * Soporta más de 26 incisos (aa, ab, ac...)
+ * Localiza el tab activo en la respuesta de Docs API.
  */
-function numeroALetra(numero) {
-  const letras = 'abcdefghijklmnopqrstuvwxyz';
-  if (numero < letras.length) {
-    return letras[numero];
+function incisoFindApiTab_(
+  tabs,
+  wantedTabId
+) {
+  for (
+    let index = 0;
+    index < tabs.length;
+    index++
+  ) {
+    const tab = tabs[index];
+
+    const properties =
+      tab.tabProperties || {};
+
+    if (
+      String(properties.tabId || '') ===
+      String(wantedTabId || '')
+    ) {
+      return tab;
+    }
   }
-  const primera = letras[Math.floor(numero / letras.length) - 1] || '';
-  const segunda = letras[numero % letras.length];
-  return primera + segunda;
+
+  return null;
 }
