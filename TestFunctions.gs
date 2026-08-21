@@ -1,201 +1,120 @@
 /**
  * TEST LAB
  *
- * TEST-018:
- * Comprueba si una copia trasladada mediante otro documento
- * conserva el formato nativo a), pero recibe un List ID nuevo.
+ * Diagnóstico del cursor y de la selección actual.
+ * No modifica el documento.
  */
 
 function runCurrentTest() {
-  return testCreateIndependentNativeLetterList_();
+  return testInspectCurrentContext_();
 }
 
 
-function testCreateIndependentNativeLetterList_() {
+function testInspectCurrentContext_() {
   const started = Date.now();
   const document = DocumentApp.getActiveDocument();
 
-  const source = testGetNativeListItemFromContext_(document);
+  const cursor = document.getCursor();
+  const selection = document.getSelection();
 
-  if (!source) {
-    throw new Error(
-      'Place the cursor inside a native a) list item.'
+  const result = {
+    testId: 'TEST-019-CONTEXT-DIAGNOSTIC',
+    ok: true,
+    hasCursor: Boolean(cursor),
+    hasSelection: Boolean(selection),
+    cursor: null,
+    selection: [],
+    elapsedMs: 0
+  };
+
+  if (cursor) {
+    result.cursor = testDescribeElement_(
+      cursor.getElement()
     );
   }
 
-  const activeParent = source.getParent();
+  if (selection) {
+    const rangeElements = selection.getRangeElements();
 
-  if (
-    !activeParent ||
-    typeof activeParent.insertListItem !== 'function'
-  ) {
-    throw new Error(
-      'The source list item is inside an unsupported container.'
-    );
-  }
+    for (let i = 0; i < rangeElements.length; i++) {
+      const rangeElement = rangeElements[i];
+      const element = rangeElement.getElement();
 
-  const sourceIndex = activeParent.getChildIndex(source);
-  const sourceListId = source.getListId();
-  const sourceGlyphType = String(source.getGlyphType());
-  const sourceNestingLevel = source.getNestingLevel();
+      const description = testDescribeElement_(element);
 
-  let temporaryDocumentId = null;
-  let temporaryFileTrashed = false;
-  let cleanupError = null;
-  let result = null;
+      description.rangeIndex = i;
+      description.isPartial = rangeElement.isPartial();
+      description.startOffset =
+        rangeElement.getStartOffset();
+      description.endOffsetInclusive =
+        rangeElement.getEndOffsetInclusive();
 
-  try {
-    /*
-     * El documento intermedio obliga a Google Docs a remapear
-     * la definición y el ID de la lista.
-     */
-    const temporaryDocument = DocumentApp.create(
-      'DocsAssistant Native List Bridge ' + Date.now()
-    );
-
-    temporaryDocumentId = temporaryDocument.getId();
-
-    const temporaryBody = temporaryDocument.getBody();
-
-    const temporaryItem = temporaryBody.insertListItem(
-      0,
-      source.copy()
-    );
-
-    temporaryItem.setText('NATIVE LIST TEMPLATE');
-
-    const temporaryListId = temporaryItem.getListId();
-    const bridgeCopy = temporaryItem.copy();
-
-    temporaryDocument.saveAndClose();
-
-    /*
-     * Inserta nuevamente la copia en el documento activo.
-     * Su List ID procede del documento temporal y no debería
-     * coincidir con el List ID original.
-     */
-    bridgeCopy.setText('NATIVE NEW LIST TEST');
-
-    const inserted = activeParent.insertListItem(
-      sourceIndex + 1,
-      bridgeCopy
-    );
-
-    inserted
-      .setIndentFirstLine(18)
-      .setIndentStart(36)
-      .setIndentEnd(0);
-
-    const insertedListId = inserted.getListId();
-
-    result = {
-      testId: 'TEST-018-INDEPENDENT-NATIVE-INCISO',
-      ok: true,
-
-      source: {
-        text: source.getText(),
-        listId: sourceListId,
-        glyphType: sourceGlyphType,
-        nestingLevel: sourceNestingLevel
-      },
-
-      temporary: {
-        listId: temporaryListId
-      },
-
-      inserted: {
-        text: inserted.getText(),
-        listId: insertedListId,
-        glyphType: String(inserted.getGlyphType()),
-        nestingLevel: inserted.getNestingLevel(),
-        indentFirstLine: inserted.getIndentFirstLine(),
-        indentStart: inserted.getIndentStart(),
-        indentEnd: inserted.getIndentEnd(),
-        isNativeListItem:
-          inserted.getType() ===
-          DocumentApp.ElementType.LIST_ITEM
-      },
-
-      independentFromSource:
-        insertedListId !== sourceListId,
-
-      elapsedMsBeforeCleanup:
-        Date.now() - started
-    };
-
-    document.saveAndClose();
-
-  } finally {
-    if (temporaryDocumentId) {
-      try {
-        DriveApp
-          .getFileById(temporaryDocumentId)
-          .setTrashed(true);
-
-        temporaryFileTrashed = true;
-
-      } catch (error) {
-        cleanupError = String(error);
-      }
+      result.selection.push(description);
     }
   }
 
-  result.temporaryFileTrashed = temporaryFileTrashed;
-  result.cleanupError = cleanupError;
   result.elapsedMs = Date.now() - started;
 
   return result;
 }
 
 
-function testGetNativeListItemFromContext_(document) {
-  const cursor = document.getCursor();
+function testDescribeElement_(element) {
+  const description = {
+    elementType: null,
+    text: null,
+    ancestors: []
+  };
 
-  if (cursor) {
-    const cursorItem = testFindListItemAncestor_(
-      cursor.getElement()
-    );
-
-    if (cursorItem) {
-      return cursorItem;
-    }
+  if (!element) {
+    return description;
   }
 
-  const selection = document.getSelection();
+  description.elementType = String(element.getType());
 
-  if (!selection) {
-    return null;
+  try {
+    description.text = element.getText();
+  } catch (error) {
+    description.text = null;
   }
 
-  const rangeElements = selection.getRangeElements();
-
-  for (let i = 0; i < rangeElements.length; i++) {
-    const listItem = testFindListItemAncestor_(
-      rangeElements[i].getElement()
-    );
-
-    if (listItem) {
-      return listItem;
-    }
-  }
-
-  return null;
-}
-
-
-function testFindListItemAncestor_(element) {
   let current = element;
+  let depth = 0;
 
-  while (current) {
+  while (current && depth < 15) {
+    const ancestor = {
+      depth: depth,
+      type: String(current.getType()),
+      text: null,
+      listId: null,
+      glyphType: null,
+      nestingLevel: null
+    };
+
+    try {
+      ancestor.text = current.getText();
+    } catch (error) {
+      ancestor.text = null;
+    }
+
     if (
       current.getType() ===
       DocumentApp.ElementType.LIST_ITEM
     ) {
-      return current.asListItem();
+      const listItem = current.asListItem();
+
+      ancestor.listId = listItem.getListId();
+      ancestor.glyphType =
+        String(listItem.getGlyphType());
+      ancestor.nestingLevel =
+        listItem.getNestingLevel();
     }
 
+    description.ancestors.push(ancestor);
+
     current = current.getParent();
+    depth++;
   }
 
-  return null;
+  return description;
 }
