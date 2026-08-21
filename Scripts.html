@@ -118,6 +118,38 @@ function styleText(s,e){
    .withFailureHandler(fail)
    .applyStyleToCurrentContext(s);
 }
+ function runCurrentTestUi(e) {
+  const output = document.getElementById('testOutput');
+
+  if (!beginTask(e.currentTarget, 'Testing…')) {
+    return;
+  }
+
+  output.value = 'Running test…';
+
+  google.script.run
+    .withSuccessHandler(result => {
+      result = result || {};
+
+      output.value = JSON.stringify(result, null, 2);
+
+      const ok = result.ok !== false;
+
+      endTask(
+        ok,
+        result.message || 'Test completed'
+      );
+    })
+    .withFailureHandler(error => {
+      const message = error && error.message
+        ? error.message
+        : String(error);
+
+      output.value = 'ERROR\n' + message;
+      fail(error);
+    })
+    .runCurrentTest();
+}
 function toggleIndentBy(){
  const mode=document.getElementById('indentSpecial').value;
  document.getElementById('indentByWrap').classList.toggle('hidden',mode==='NONE');
