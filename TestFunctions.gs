@@ -3,7 +3,352 @@
  * Crea una lista nativa a) independiente sin leer el documento completo.
  */
 function runCurrentTest() {
-  return testFastIndependentNativeInciso_();
+  return testNativeIncisoWithNamedRange_();
+}
+
+
+function testNativeIncisoWithNamedRange_() {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const documentId = doc.getId();
+  const tabId = doc.getActiveTab().getId();
+  const documentTab = doc.getActiveTab().asDocumentTab();
+
+  const target = getSingleParagraph023_(doc);
+
+  if (target.getType() !== DocumentApp.ElementType.PARAGRAPH) {
+    throw new Error(
+      'TEST-024: coloque el cursor dentro de un párrafo normal.'
+    );
+  }
+
+  if (/[\r\n]/.test(target.getText())) {
+    throw new Error(
+      'TEST-024: use un párrafo independiente sin Shift+Enter.'
+    );
+  }
+
+  const parent = target.getParent();
+
+  if (
+    !parent ||
+    parent.getType() !== DocumentApp.ElementType.BODY_SECTION
+  ) {
+    throw new Error(
+      'TEST-024: el párrafo debe estar en el cuerpo del documento.'
+    );
+  }
+
+  const uniqueId = Utilities.getUuid().replace(/-/g, '');
+  const rangeName = 'DOCSASSISTANT_TEST_024_' + uniqueId;
+  const separatorMarker = 'DASEP024' + uniqueId;
+
+  /*
+   * Impide que Docs continúe automáticamente una lista anterior.
+   */
+  const targetIndex = parent.getChildIndex(target);
+  parent.insertParagraph(targetIndex, separatorMarker);
+
+  /*
+   * Crear el rango explícitamente en la pestaña activa.
+   */
+  const rangeBuilder = documentTab.newRange();
+  rangeBuilder.addElement(target);
+
+  const namedRange = documentTab.addNamedRange(
+    rangeName,
+    rangeBuilder.build()
+  );
+
+  const namedRangeId = namedRange.getId();
+
+  let apiReadMs = 0;
+  let apiWriteMs = 0;
+
+  doc.saveAndClose();
+
+  try {
+    /*
+     * Pausa corta solamente para que Docs API vea el rango recién guardado.
+     */
+    Utilities.sleep(250);
+
+    const readStarted = Date.now();
+
+    const apiDocument = Docs.Documents.get(documentId, {
+      includeTabsContent: true,
+      fields: buildNamedRangeFields024_(4)
+    });
+
+    apiReadMs = Date.now() - readStarted;
+
+    const locatedRange = findNamedRange024_(
+      apiDocument.tabs || [],
+      rangeName,
+      namedRangeId
+    );
+
+    if (!locatedRange) {
+      throw new Error(
+        'Docs API no devolvió el rango con nombre.'
+      );
+    }
+
+    const writeStarted = Date.now();
+
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            createParagraphBullets: {
+              range: {
+                startIndex: locatedRange.startIndex,
+                endIndex: locatedRange.endIndex,
+                tabId: locatedRange.tabId
+              },
+              bulletPreset:
+                'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
+            }
+          }
+        ]
+      },
+      documentId
+    );
+
+    apiWriteMs = Date.now() - writeStarted;
+
+    const reopenedDoc = DocumentApp.openById(documentId);
+    const reopenedTabObject =
+      reopenedDoc.getTab(locatedRange.tabId);
+
+    if (!reopenedTabObject) {
+      throw new Error(
+        'No se pudo volver a abrir la pestaña.'
+      );
+    }
+
+    const reopenedTab =
+      reopenedTabObject.asDocumentTab();
+
+    const localNamedRange =
+      reopenedTab.getNamedRangeById(namedRangeId);
+
+    if (!localNamedRange) {
+      throw new Error(
+        'No se encontró localmente el rango después de aplicar la lista.'
+      );
+    }
+
+    const rangeElements =
+      localNamedRange.getRange().getRangeElements();
+
+    let listItem = null;
+
+    for (let i = 0; i < rangeElements.length; i++) {
+      const paragraph = findParagraph023_(
+        rangeElements[i].getElement()
+      );
+
+      if (
+        paragraph &&
+        paragraph.getType() ===
+          DocumentApp.ElementType.LIST_ITEM
+      ) {
+        listItem = paragraph.asListItem();
+        break;
+      }
+    }
+
+    if (!listItem) {
+      throw new Error(
+        'El elemento resultante no es una lista nativa.'
+      );
+    }
+
+    /*
+     * El preset se crea en nivel 0 = 1).
+     * Forzamos nivel 1 = a).
+     */
+    listItem
+      .setNestingLevel(1)
+      .setIndentFirstLine(18)
+      .setIndentStart(36)
+      .setIndentEnd(0);
+
+    localNamedRange.remove();
+
+    const separatorRemoved = removeSeparator024_(
+      reopenedTab.getBody(),
+      separatorMarker
+    );
+
+    const result = {
+      testId: 'TEST-024-NAMED-RANGE-NATIVE-INCISO',
+      ok: true,
+      isNative: true,
+      glyphType: String(listItem.getGlyphType()),
+      nestingLevel: listItem.getNestingLevel(),
+      listId: listItem.getListId(),
+      separatorRemoved: separatorRemoved,
+      namedRangeRemoved: true,
+      apiReadMs: apiReadMs,
+      apiWriteMs: apiWriteMs,
+      elapsedMs: Date.now() - started
+    };
+
+    reopenedDoc.saveAndClose();
+    return result;
+
+  } catch (error) {
+    cleanupTest024_(
+      documentId,
+      tabId,
+      namedRangeId,
+      separatorMarker
+    );
+
+    throw new Error(
+      'TEST-024: ' +
+      (error && error.message
+        ? error.message
+        : String(error))
+    );
+  }
+}
+
+
+function buildNamedRangeFields024_(depth) {
+  return 'tabs(' + buildTabFields024_(depth) + ')';
+}
+
+
+function buildTabFields024_(depth) {
+  let fields =
+    'tabProperties(tabId),' +
+    'documentTab(namedRanges)';
+
+  if (depth > 0) {
+    fields +=
+      ',childTabs(' +
+      buildTabFields024_(depth - 1) +
+      ')';
+  }
+
+  return fields;
+}
+
+
+/**
+ * documentTab.namedRanges es un mapa indexado por nombre:
+ *
+ * namedRanges[nombre].namedRanges[]
+ */
+function findNamedRange024_(tabs, rangeName, rangeId) {
+  for (let i = 0; i < tabs.length; i++) {
+    const tab = tabs[i];
+    const currentTabId = tab.tabProperties
+      ? tab.tabProperties.tabId
+      : null;
+
+    const map =
+      tab.documentTab &&
+      tab.documentTab.namedRanges
+        ? tab.documentTab.namedRanges
+        : {};
+
+    const group = map[rangeName];
+
+    if (group && group.namedRanges) {
+      for (let j = 0; j < group.namedRanges.length; j++) {
+        const candidate = group.namedRanges[j];
+
+        if (
+          !rangeId ||
+          candidate.namedRangeId === rangeId
+        ) {
+          const ranges = candidate.ranges || [];
+
+          if (ranges.length > 0) {
+            return {
+              startIndex: ranges[0].startIndex,
+              endIndex: ranges[0].endIndex,
+              tabId: ranges[0].tabId || currentTabId
+            };
+          }
+        }
+      }
+    }
+
+    const childResult = findNamedRange024_(
+      tab.childTabs || [],
+      rangeName,
+      rangeId
+    );
+
+    if (childResult) {
+      return childResult;
+    }
+  }
+
+  return null;
+}
+
+
+function removeSeparator024_(body, marker) {
+  const result = body.findText(marker);
+
+  if (!result) {
+    return false;
+  }
+
+  const paragraph = findParagraph023_(
+    result.getElement()
+  );
+
+  if (!paragraph) {
+    return false;
+  }
+
+  paragraph.removeFromParent();
+  return true;
+}
+
+
+function cleanupTest024_(
+  documentId,
+  tabId,
+  namedRangeId,
+  separatorMarker
+) {
+  try {
+    const cleanupDoc =
+      DocumentApp.openById(documentId);
+
+    const tabObject = cleanupDoc.getTab(tabId);
+
+    if (!tabObject) {
+      return;
+    }
+
+    const cleanupTab = tabObject.asDocumentTab();
+
+    const namedRange =
+      cleanupTab.getNamedRangeById(namedRangeId);
+
+    if (namedRange) {
+      namedRange.remove();
+    }
+
+    removeSeparator024_(
+      cleanupTab.getBody(),
+      separatorMarker
+    );
+
+    cleanupDoc.saveAndClose();
+
+  } catch (cleanupError) {
+    // No ocultar el error original.
+  }
 }
 
 
