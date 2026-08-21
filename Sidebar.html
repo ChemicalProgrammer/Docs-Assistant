@@ -47,7 +47,22 @@
         <button class="wide btn-fullformat" onclick="fullSmartFormat(event)">✦ Format complete selection</button>
         <div class="smartHint">Uses local rules for obvious structure and Gemini only for ambiguous paragraphs. Applies Normal text, headings, lists, captions and notes. Actual table objects are skipped.</div>
       </div>
+<div class="group">
+  <label>QUICK SELECTION FORMAT</label>
 
+  <button
+    class="wide btn-style"
+    onclick="formatSelectedStyles(event)"
+  >
+    ✦ Format selected styles
+  </button>
+
+  <div class="smartHint">
+    Keeps existing heading levels and reapplies their
+    current Named Styles. Normal and blank paragraphs
+    receive Normal text.
+  </div>
+</div>
       <div class="group">
         <label>TEXT STYLE</label>
         <button class="wide btn-style" onclick="styleText('NORMAL',event)">Normal text</button>
