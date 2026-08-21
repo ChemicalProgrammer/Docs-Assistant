@@ -1098,19 +1098,212 @@ function setKeepWithNext(value) {
   return true;
 }
 
-function applyListPreset(type, continuePrevious) {
-  // Selection is optional. With only the cursor, format the whole current line.
-  const paragraphs = getStyleTargetParagraphs_();
+/**
+ * Applies a real, automatic Google Docs list to the current paragraph or to
+ * every paragraph in the selection. This path intentionally uses only
+ * DocumentApp so the four list buttons remain fast and predictable.
+ *
+ * The previous-list/continue behavior is deliberately not part of this UI
+ * command: the selected paragraphs always become one native list sequence.
+ */
+function applyListPreset(type) {
+  return applyFastNativeListPreset_(type);
+}
+
+function applyFastNativeListPreset_(requestedType) {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const activeTab = doc.getActiveTab();
+
+  if (!activeTab) {
+    throw new Error('Could not read the active document tab.');
+  }
+
+  const body = activeTab.asDocumentTab().getBody();
+  const paragraphs = uiListGetTargetParagraphs_(doc, body);
+
   if (!paragraphs.length) {
     throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
   }
 
-  // Bullets must be REAL Google Docs bullets (native ListItems).
-  if (type === 'BULLET') {
-    return applyNativeBulletPreset_(paragraphs, Boolean(continuePrevious));
+  const normalizedType = String(requestedType || '').toUpperCase();
+  const glyphType = uiListGetGlyphType_(normalizedType);
+  const listItems = paragraphs.map(function(paragraph) {
+    if (paragraph.getType() === DocumentApp.ElementType.LIST_ITEM) {
+      return paragraph.asListItem();
+    }
+
+    return uiListConvertParagraph_(body, paragraph);
+  });
+
+  const firstListItem = listItems[0];
+  uiListFormatItem_(firstListItem, glyphType);
+
+  for (let i = 1; i < listItems.length; i++) {
+    listItems[i].setListId(firstListItem);
+    uiListFormatItem_(listItems[i], glyphType);
   }
 
-  return applyManualListPreset_(paragraphs, type, Boolean(continuePrevious));
+  return {
+    ok: true,
+    requestedType: normalizedType,
+    automaticList: true,
+    paragraphsApplied: listItems.length,
+    glyph: uiListExpectedGlyph_(normalizedType),
+    usesDocsApi: false,
+    elapsedMs: Date.now() - started
+  };
+}
+
+function uiListFormatItem_(listItem, glyphType) {
+  listItem
+    .setGlyphType(glyphType)
+    .setNestingLevel(0)
+    .setHeading(DocumentApp.ParagraphHeading.NORMAL)
+    .setIndentStart(36)
+    .setIndentFirstLine(18)
+    .setIndentEnd(0);
+}
+
+function uiListConvertParagraph_(body, paragraph) {
+  const childIndex = body.getChildIndex(paragraph);
+
+  if (childIndex < 0) {
+    throw new Error('The paragraph does not belong to the active document body.');
+  }
+
+  const sourceText = paragraph.editAsText();
+  const textContent = sourceText.getText();
+  const listItem = body.insertListItem(childIndex, textContent);
+
+  uiListCopyTextFormatting_(sourceText, listItem.editAsText());
+  paragraph.removeFromParent();
+
+  return listItem;
+}
+
+function uiListCopyTextFormatting_(sourceText, destinationText) {
+  const textLength = sourceText.getText().length;
+  if (!textLength) return;
+
+  const indices = sourceText.getTextAttributeIndices();
+
+  for (let i = 0; i < indices.length; i++) {
+    const start = indices[i];
+    const end = i + 1 < indices.length ? indices[i + 1] - 1 : textLength - 1;
+    destinationText.setAttributes(start, end, sourceText.getAttributes(start));
+  }
+}
+
+function uiListGetGlyphType_(type) {
+  const glyphTypes = {
+    BULLET: DocumentApp.GlyphType.BULLET,
+    NUMBER: DocumentApp.GlyphType.NUMBER,
+    LETTER: DocumentApp.GlyphType.LATIN_LOWER,
+    ROMAN: DocumentApp.GlyphType.ROMAN_UPPER
+  };
+
+  if (!glyphTypes[type]) {
+    throw new Error('Unknown list type: ' + type);
+  }
+
+  return glyphTypes[type];
+}
+
+function uiListExpectedGlyph_(type) {
+  return {
+    BULLET: '•',
+    NUMBER: '1.',
+    LETTER: 'a.',
+    ROMAN: 'I.'
+  }[type] || '';
+}
+
+function uiListGetTargetParagraphs_(doc, body) {
+  const selection = doc.getSelection();
+  const foundIndexes = {};
+
+  if (selection) {
+    selection.getRangeElements().forEach(function(rangeElement) {
+      const paragraph = uiListFindParagraph_(rangeElement.getElement());
+      if (!paragraph) return;
+
+      const index = uiListBodyChildIndex_(body, paragraph);
+      if (index >= 0) foundIndexes[index] = true;
+    });
+  } else {
+    const cursor = doc.getCursor();
+
+    if (!cursor) {
+      throw new Error('No selection or cursor was detected.');
+    }
+
+    const paragraph = uiListFindParagraph_(cursor.getElement());
+    if (!paragraph) {
+      throw new Error('The cursor is not inside a paragraph.');
+    }
+
+    const index = uiListBodyChildIndex_(body, paragraph);
+    if (index < 0) {
+      throw new Error('Lists can currently be applied only in the main document body.');
+    }
+
+    foundIndexes[index] = true;
+  }
+
+  const selectedIndexes = Object.keys(foundIndexes)
+    .map(Number)
+    .sort(function(a, b) { return a - b; });
+
+  if (!selectedIndexes.length) return [];
+
+  const first = selectedIndexes[0];
+  const last = selectedIndexes[selectedIndexes.length - 1];
+  const paragraphs = [];
+
+  for (let i = first; i <= last; i++) {
+    const element = body.getChild(i);
+    const elementType = element.getType();
+
+    if (
+      elementType === DocumentApp.ElementType.PARAGRAPH ||
+      elementType === DocumentApp.ElementType.LIST_ITEM
+    ) {
+      paragraphs.push(element);
+      continue;
+    }
+
+    throw new Error('The selection contains an element that is not a paragraph.');
+  }
+
+  return paragraphs;
+}
+
+function uiListFindParagraph_(element) {
+  let current = element;
+
+  while (current) {
+    const elementType = current.getType();
+
+    if (
+      elementType === DocumentApp.ElementType.PARAGRAPH ||
+      elementType === DocumentApp.ElementType.LIST_ITEM
+    ) {
+      return current;
+    }
+
+    current = current.getParent ? current.getParent() : null;
+  }
+
+  return null;
+}
+
+function uiListBodyChildIndex_(body, paragraph) {
+  try {
+    return body.getChildIndex(paragraph);
+  } catch (error) {
+    return -1;
+  }
 }
 
 /**

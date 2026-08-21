@@ -261,7 +261,7 @@ function formatSelectedStyles(e) {
 }
 function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
 function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
-function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t,document.getElementById('continueNumbering').checked],'List applied')}
+function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t],'List applied')}
 function formatNote(e){
  runServer(e.currentTarget,'…','formatNoteLine',[],'Note formatted');
 }

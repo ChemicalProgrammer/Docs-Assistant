@@ -77,13 +77,12 @@
       <div class="group">
         <label>LISTS</label>
         <div class="grid4">
-          <button class="btn-list" onclick="list('BULLET',event)">•</button>
-          <button class="btn-list" onclick="list('NUMBER',event)">1.</button>
-          <button class="btn-list" onclick="list('LETTER',event)">a)</button>
-          <button class="btn-list" onclick="list('ROMAN',event)">i.</button>
+          <button class="btn-list" title="Bullets" onclick="list('BULLET',event)">•</button>
+          <button class="btn-list" title="Numbering" onclick="list('NUMBER',event)">1.</button>
+          <button class="btn-list" title="Letters" onclick="list('LETTER',event)">a.</button>
+          <button class="btn-list" title="Roman numerals" onclick="list('ROMAN',event)">I.</button>
         </div>
-        <label class="check"><input id="continueNumbering" type="checkbox"> Continue previous numbering</label>
-        <div class="smartHint listHint">Continue reads the nearest previous matching item. Letters use a), b), c); numbers use 1., 2., 3. List formatting is isolated so nearby heading numbering is not modified.</div>
+        <div class="smartHint listHint">Applies a native automatic list to the selected paragraphs or to the paragraph at the cursor.</div>
       </div>
 
       <div class="group">
