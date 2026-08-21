@@ -200,16 +200,16 @@ function testApplyNativeIncisos_() {
   ];
 
   // Eliminar los marcadores temporales.
-  markers.forEach(function (marker) {
-    requests.push({
-      deleteNamedRange: {
-        namedRangeId: marker.id,
-        tabsCriteria: {
-          tabIds: [tabId]
-        }
+markers.forEach(function (marker) {
+  requests.push({
+    deleteNamedRange: {
+      name: marker.name,
+      tabsCriteria: {
+        tabIds: [tabId]
       }
-    });
+    }
   });
+});
 
   Docs.Documents.batchUpdate(
     {
