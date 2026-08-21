@@ -1,29 +1,31 @@
 /**
  * TEST LAB
  *
- * TEST-020:
- * Crear una lista nativa nueva a) usando:
- * - NamedRange local.
- * - Lectura parcial de la API.
- * - NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS.
+ * TEST-021
+ * Crea un inciso nativo nuevo a) en la pestaña activa.
  *
- * Seleccionar únicamente una línea normal: Octubre.
+ * Seleccionar únicamente la palabra "Octubre".
  */
 
 function runCurrentTest() {
-  return testCreateNewNativeInciso_();
+  return testCreateIndependentNativeIncisoWithApi_();
 }
 
 
-function testCreateNewNativeInciso_() {
+function testCreateIndependentNativeIncisoWithApi_() {
   const started = Date.now();
   const document = DocumentApp.getActiveDocument();
   const documentId = document.getId();
-  const selection = document.getSelection();
+
+  const activeTab = document.getActiveTab();
+  const activeTabId = activeTab.getId();
+  const documentTab = activeTab.asDocumentTab();
+
+  let selection = document.getSelection();
 
   if (!selection) {
     throw new Error(
-      'Select the normal paragraph Octubre.'
+      'Select only the word Octubre.'
     );
   }
 
@@ -49,25 +51,69 @@ function testCreateNewNativeInciso_() {
     DocumentApp.ElementType.LIST_ITEM
   ) {
     throw new Error(
-      'For this test, select a normal paragraph without numbering.'
+      'Octubre must be a normal paragraph for this test.'
     );
   }
+
+  /*
+   * Limpia residuos de una ejecución anterior fallida.
+   */
+  const targetText = targetParagraph.editAsText();
+
+  if (
+    targetText.getText().charAt(0) === '\t'
+  ) {
+    targetText.deleteText(0, 0);
+  }
+
+  const staleRanges =
+    documentTab.getNamedRanges();
+
+  for (let i = 0; i < staleRanges.length; i++) {
+    if (
+      staleRanges[i]
+        .getName()
+        .indexOf('DOCSASSISTANT_TEST_') === 0
+    ) {
+      staleRanges[i].remove();
+    }
+  }
+
+  /*
+   * Inserta un párrafo invisible antes de Octubre.
+   * Así la API no conecta la lista nueva con la anterior.
+   */
+  const parent = targetParagraph.getParent();
+  const targetIndex =
+    parent.getChildIndex(targetParagraph);
+
+  parent.insertParagraph(
+    targetIndex,
+    '\u200B'
+  );
+
+  /*
+   * Recupera la selección después de modificar la estructura.
+   */
+  selection =
+    document.getSelection() || selection;
 
   const markerName =
     'DOCSASSISTANT_TEST_' +
     Utilities.getUuid();
 
-  const namedRange = document.addNamedRange(
-    markerName,
-    selection
-  );
+  const namedRange =
+    documentTab.addNamedRange(
+      markerName,
+      selection
+    );
 
-  const namedRangeId = namedRange.getId();
+  const namedRangeId =
+    namedRange.getId();
 
   /*
-   * Un tabulador inicial indica nivel 1.
-   * En el preset seleccionado, el nivel 1 es a).
-   * La API elimina automáticamente el tabulador.
+   * Un tabulador inicial genera el nivel 1:
+   * a), b), c)...
    */
   targetParagraph
     .editAsText()
@@ -78,22 +124,36 @@ function testCreateNewNativeInciso_() {
   const readStarted = Date.now();
 
   /*
-   * Solo recupera los rangos nombrados.
-   * No descarga el contenido completo del documento.
+   * Recupera únicamente:
+   * - ID de las pestañas.
+   * - Rangos nombrados.
+   *
+   * No descarga las 295 páginas.
    */
-  const apiDocument = Docs.Documents.get(
-    documentId,
-    {
-      fields: 'namedRanges'
-    }
-  );
+  const apiDocument =
+    Docs.Documents.get(
+      documentId,
+      {
+        includeTabsContent: true,
+        fields:
+          'tabs(' +
+            'tabProperties(tabId),' +
+            'documentTab(namedRanges),' +
+            'childTabs(' +
+              'tabProperties(tabId),' +
+              'documentTab(namedRanges)' +
+            ')' +
+          ')'
+      }
+    );
 
   const apiReadMs =
     Date.now() - readStarted;
 
   const apiNamedRange =
-    testFindApiNamedRange_(
-      apiDocument,
+    testFindNamedRangeInTabs_(
+      apiDocument.tabs || [],
+      activeTabId,
       markerName,
       namedRangeId
     );
@@ -104,7 +164,7 @@ function testCreateNewNativeInciso_() {
     apiNamedRange.ranges.length === 0
   ) {
     throw new Error(
-      'The temporary named range was not returned by the Docs API.'
+      'The named range was not found in the active Docs tab.'
     );
   }
 
@@ -113,20 +173,11 @@ function testCreateNewNativeInciso_() {
 
   const requestRange = {
     startIndex: sourceRange.startIndex,
-    endIndex: sourceRange.endIndex
+    endIndex: sourceRange.endIndex,
+    tabId: activeTabId
   };
 
-  if (sourceRange.segmentId) {
-    requestRange.segmentId =
-      sourceRange.segmentId;
-  }
-
-  if (sourceRange.tabId) {
-    requestRange.tabId =
-      sourceRange.tabId;
-  }
-
-  const updateStarted = Date.now();
+  const writeStarted = Date.now();
 
   Docs.Documents.batchUpdate(
     {
@@ -144,95 +195,110 @@ function testCreateNewNativeInciso_() {
   );
 
   const apiWriteMs =
-    Date.now() - updateStarted;
+    Date.now() - writeStarted;
 
   /*
-   * Reabre el documento para aplicar las sangrías
-   * mediante DocumentApp y retirar el rango auxiliar.
+   * Reabre exactamente la misma pestaña.
    */
-  const reopened =
+  const reopenedDocument =
     DocumentApp.openById(documentId);
 
+  const reopenedTab =
+    reopenedDocument
+      .getTab(activeTabId)
+      .asDocumentTab();
+
   const savedNamedRange =
-    reopened.getNamedRangeById(namedRangeId);
+    reopenedTab.getNamedRangeById(
+      namedRangeId
+    );
 
   if (!savedNamedRange) {
     throw new Error(
-      'The named range could not be reopened after the API update.'
+      'The named range could not be reopened.'
     );
   }
 
-  const updatedRangeElements =
+  const updatedElements =
     savedNamedRange
       .getRange()
       .getRangeElements();
 
-  let insertedListItem = null;
+  let listItem = null;
 
   for (
     let i = 0;
-    i < updatedRangeElements.length;
+    i < updatedElements.length;
     i++
   ) {
-    insertedListItem =
+    listItem =
       testFindListItemAncestor_(
-        updatedRangeElements[i].getElement()
+        updatedElements[i].getElement()
       );
 
-    if (insertedListItem) {
+    if (listItem) {
       break;
     }
   }
 
-  if (!insertedListItem) {
+  if (!listItem) {
     throw new Error(
-      'The API request did not create a native list item.'
+      'The API did not create a native list item.'
     );
   }
 
-  insertedListItem
+  listItem
     .setIndentFirstLine(18)
     .setIndentStart(36)
     .setIndentEnd(0);
 
+  /*
+   * Retira el separador invisible.
+   * Los List ID ya fueron creados y permanecen separados.
+   */
+  const previousSibling =
+    listItem.getPreviousSibling();
+
+  let separatorRemoved = false;
+
+  if (
+    previousSibling &&
+    previousSibling.getType() ===
+      DocumentApp.ElementType.PARAGRAPH &&
+    previousSibling.getText() === '\u200B'
+  ) {
+    previousSibling.removeFromParent();
+    separatorRemoved = true;
+  }
+
   const result = {
     testId:
-      'TEST-020-NEW-NATIVE-INCISO',
+      'TEST-021-INDEPENDENT-NATIVE-INCISO',
 
     ok: true,
-
-    text:
-      insertedListItem.getText(),
-
-    listId:
-      insertedListItem.getListId(),
-
+    text: listItem.getText(),
+    listId: listItem.getListId(),
     glyphType:
-      String(insertedListItem.getGlyphType()),
-
+      String(listItem.getGlyphType()),
     nestingLevel:
-      insertedListItem.getNestingLevel(),
-
+      listItem.getNestingLevel(),
     isNative:
-      insertedListItem.getType() ===
+      listItem.getType() ===
       DocumentApp.ElementType.LIST_ITEM,
-
+    separatorRemoved: separatorRemoved,
     indentFirstLine:
-      insertedListItem.getIndentFirstLine(),
-
+      listItem.getIndentFirstLine(),
     indentStart:
-      insertedListItem.getIndentStart(),
-
+      listItem.getIndentStart(),
     indentEnd:
-      insertedListItem.getIndentEnd(),
-
+      listItem.getIndentEnd(),
     apiReadMs: apiReadMs,
     apiWriteMs: apiWriteMs,
     elapsedMs: Date.now() - started
   };
 
   savedNamedRange.remove();
-  reopened.saveAndClose();
+  reopenedDocument.saveAndClose();
 
   return result;
 }
@@ -278,29 +344,57 @@ function testFindListItemAncestor_(element) {
 }
 
 
-function testFindApiNamedRange_(
-  apiDocument,
+function testFindNamedRangeInTabs_(
+  tabs,
+  activeTabId,
   markerName,
   namedRangeId
 ) {
-  if (
-    !apiDocument.namedRanges ||
-    !apiDocument.namedRanges[markerName]
-  ) {
-    return null;
-  }
+  for (let i = 0; i < tabs.length; i++) {
+    const tab = tabs[i];
+    const tabId =
+      tab.tabProperties &&
+      tab.tabProperties.tabId;
 
-  const group =
-    apiDocument.namedRanges[markerName];
-
-  const ranges = group.namedRanges || [];
-
-  for (let i = 0; i < ranges.length; i++) {
     if (
-      ranges[i].namedRangeId ===
-      namedRangeId
+      tabId === activeTabId &&
+      tab.documentTab &&
+      tab.documentTab.namedRanges
     ) {
-      return ranges[i];
+      const group =
+        tab.documentTab
+          .namedRanges[markerName];
+
+      const namedRanges =
+        group &&
+        group.namedRanges
+          ? group.namedRanges
+          : [];
+
+      for (
+        let j = 0;
+        j < namedRanges.length;
+        j++
+      ) {
+        if (
+          namedRanges[j].namedRangeId ===
+          namedRangeId
+        ) {
+          return namedRanges[j];
+        }
+      }
+    }
+
+    const childResult =
+      testFindNamedRangeInTabs_(
+        tab.childTabs || [],
+        activeTabId,
+        markerName,
+        namedRangeId
+      );
+
+    if (childResult) {
+      return childResult;
     }
   }
 
