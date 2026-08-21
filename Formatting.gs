@@ -638,25 +638,32 @@ function applyStyleToSelection_(selection, styleName) {
 function applyStyleToCurrentContext(styleName) {
   const started = Date.now();
   const doc = DocumentApp.getActiveDocument();
-  const selection = doc.getSelection();
+  const body = getActiveBody_();
+  const cursor = doc.getCursor();
+  let count = 0;
+  let targetMode = '';
 
-  let count = applyStyleToSelection_(selection, styleName);
+  // Cursor must be checked before selection. When focus moves to the sidebar,
+  // Google Docs can still expose an earlier selection. Selection-first logic
+  // can therefore scan and format a large stale range instead of the paragraph
+  // where the user just placed the insertion point.
+  if (cursor) {
+    const owner = getOwningParagraph_(cursor.getElement());
 
-  // Robust cursor fallback:
-  // A numbered heading can be represented by Docs as a ListItem. If generic
-  // segmentation yields nothing, format the paragraph/list item that actually
-  // owns the cursor rather than failing.
-  if (!count && !selection) {
-    const cursor = doc.getCursor();
-
-    if (cursor) {
-      const owner = getOwningParagraph_(cursor.getElement());
-
-      if (owner && getTopLevelBodyElement_(owner, getActiveBody_()) === owner) {
-        applyStyleToParagraph_(owner, styleName);
-        count = 1;
-      }
+    // This also supports numbered headings, which Docs represents as ListItem.
+    // Paragraphs inside tables remain protected.
+    if (owner && getTopLevelBodyElement_(owner, body) === owner) {
+      applyStyleToParagraph_(owner, styleName);
+      count = 1;
+      targetMode = 'cursor';
     }
+  }
+
+  // Only use the selection when Docs reports no valid cursor target.
+  if (!count && !cursor) {
+    const selection = doc.getSelection();
+    count = applyStyleToSelection_(selection, styleName);
+    if (count) targetMode = 'selection';
   }
 
   if (!count) {
@@ -666,6 +673,7 @@ function applyStyleToCurrentContext(styleName) {
   return {
     ok: true,
     paragraphs: count,
+    targetMode: targetMode,
     elapsedMs: Date.now() - started
   };
 }

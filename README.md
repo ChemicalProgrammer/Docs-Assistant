@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.7
+# Docs Assistant v0.9.8
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -517,3 +517,11 @@ It is not written into the document or source code.
 - Normal text and Heading 1–6 buttons now apply the inherited Named Style directly through the Advanced Docs API without a synchronization call.
 - Full Smart Format captures paragraph positions first and uses the valid `Document.saveAndClose()` method only when pending DocumentApp edits must be committed before the Docs API batch.
 - Font, size, color, spacing, indentation and other visual properties continue to come from the active document's own Named Style configuration.
+
+
+## v0.9.8 — Cursor-first style targeting
+- Fixed the apparent endless execution when applying a Heading from the sidebar.
+- The style command now resolves the current cursor paragraph before consulting the document selection.
+- A stale selection retained by Google Docs can no longer make a single Heading click scan or update a large unrelated range.
+- A real selection is still supported when Google Docs reports no cursor.
+- Numbered headings represented as `ListItem` remain supported, and table-cell paragraphs remain protected.
