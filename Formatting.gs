@@ -89,8 +89,12 @@ const NAMED_STYLE_PARAGRAPH_RESET_FIELDS_ = [
  *   { paragraph: Paragraph|ListItem, styleName: 'NORMAL'|'H1'..'H6' }
  *
  * Hyperlinks are not reset, so their destinations remain intact.
+ *
+ * If savePendingChanges is true, pending DocumentApp changes are committed
+ * before the Docs API reads the document. Paragraph ordinals are captured
+ * first because saveAndClose() closes the Document instance.
  */
-function applyInheritedNamedStyles_(assignments) {
+function applyInheritedNamedStyles_(assignments, savePendingChanges) {
   assignments = (assignments || []).filter(x => x && x.paragraph);
   if (!assignments.length) return 0;
 
@@ -102,6 +106,7 @@ function applyInheritedNamedStyles_(assignments) {
   }
 
   const doc = DocumentApp.getActiveDocument();
+  const documentId = doc.getId();
   const body = getActiveBody_();
   const tabId = getActiveDocumentTabId_();
   const uniqueByChildIndex = {};
@@ -130,10 +135,17 @@ function applyInheritedNamedStyles_(assignments) {
     .map(key => uniqueByChildIndex[key])
     .sort((a, b) => a.childIndex - b.childIndex);
 
-  // Smart Format can perform DocumentApp changes before this batch.
-  DocumentApp.flush();
+  const paragraphOrdinalByBodyChild = buildBodyParagraphOrdinalMap_(body);
+  const bodyParagraphCount = Object.keys(paragraphOrdinalByBodyChild).length;
 
-  const apiDocument = Docs.Documents.get(doc.getId(), {
+  // Full Smart Format may have changed lists, captions or notes through
+  // DocumentApp. This is the valid Docs equivalent of publishing those
+  // pending edits before an Advanced Docs API request.
+  if (savePendingChanges === true) {
+    doc.saveAndClose();
+  }
+
+  const apiDocument = Docs.Documents.get(documentId, {
     includeTabsContent: true
   });
   const apiDocumentTab = getApiDocumentTab_(apiDocument, tabId);
@@ -141,11 +153,20 @@ function applyInheritedNamedStyles_(assignments) {
     ? (apiDocumentTab.body.content || [])
     : [];
   const apiParagraphs = apiContent.filter(element => element && element.paragraph);
-  const apiParagraphByBodyChild = mapApiParagraphsToBodyChildren_(body, apiParagraphs);
+
+  if (apiParagraphs.length !== bodyParagraphCount) {
+    throw new Error(
+      'The Apps Script and Docs API paragraph structures are out of sync. Try the style again.'
+    );
+  }
+
   const requests = [];
 
   normalized.forEach(assignment => {
-    const structural = apiParagraphByBodyChild[assignment.childIndex];
+    const paragraphOrdinal = paragraphOrdinalByBodyChild[assignment.childIndex];
+    const structural = typeof paragraphOrdinal === 'undefined'
+      ? null
+      : apiParagraphs[paragraphOrdinal];
 
     if (
       !structural ||
@@ -192,7 +213,7 @@ function applyInheritedNamedStyles_(assignments) {
     };
   }
 
-  Docs.Documents.batchUpdate(requestBody, doc.getId());
+  Docs.Documents.batchUpdate(requestBody, documentId);
   return normalized.length;
 }
 
@@ -246,9 +267,9 @@ function findApiTabById_(tabs, tabId) {
   return null;
 }
 
-function mapApiParagraphsToBodyChildren_(body, apiParagraphs) {
+function buildBodyParagraphOrdinalMap_(body) {
   const result = {};
-  let apiIndex = 0;
+  let paragraphOrdinal = 0;
 
   for (let i = 0; i < body.getNumChildren(); i++) {
     const type = body.getChild(i).getType();
@@ -258,14 +279,8 @@ function mapApiParagraphsToBodyChildren_(body, apiParagraphs) {
 
     if (!isParagraph) continue;
 
-    const apiParagraph = apiParagraphs[apiIndex++];
-    if (apiParagraph) result[i] = apiParagraph;
-  }
-
-  if (apiIndex !== apiParagraphs.length) {
-    throw new Error(
-      'The Apps Script and Docs API paragraph structures are out of sync. Try the style again.'
-    );
+    result[i] = paragraphOrdinal;
+    paragraphOrdinal++;
   }
 
   return result;
@@ -2573,7 +2588,7 @@ function smartFormatSelection() {
     formatted++;
   });
 
-  applyInheritedNamedStyles_(inheritedStyleAssignments);
+  applyInheritedNamedStyles_(inheritedStyleAssignments, true);
 
   return {
     ok: true,

@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.6
+# Docs Assistant v0.9.7
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -510,3 +510,10 @@ It is not written into the document or source code.
 - Multi-paragraph selections and Full Smart Format batch their Named Style changes into one Docs API call.
 - Active and nested Google Docs tabs are supported through `tabId`.
 - The manifest now enables the Advanced Docs service and requests the Docs API authorization scope.
+
+
+## v0.9.7 — Document synchronization fix
+- Removed the invalid call to `DocumentApp.flush()`; that function does not exist in the Google Docs Apps Script service.
+- Normal text and Heading 1–6 buttons now apply the inherited Named Style directly through the Advanced Docs API without a synchronization call.
+- Full Smart Format captures paragraph positions first and uses the valid `Document.saveAndClose()` method only when pending DocumentApp edits must be committed before the Docs API batch.
+- Font, size, color, spacing, indentation and other visual properties continue to come from the active document's own Named Style configuration.
