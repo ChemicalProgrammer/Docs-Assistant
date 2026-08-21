@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.1
+# Docs Assistant v0.9.2
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -446,3 +446,18 @@ It is not written into the document or source code.
   - None: first line = left, wrapped lines = left
   - First line: first line = left + by, wrapped lines = left
   - Hanging: first line = left, wrapped lines = left + by
+
+
+## v0.9.2 — Fast Apply + optional Reset Overrides
+- Named-style buttons now have two explicit modes:
+  - Fast Apply (default): exactly one native `setHeading()` formatting mutation per paragraph; no style-property reads.
+  - Reset direct formatting (optional checkbox): reads the current Named Style once, then reapplies its effective paragraph/text properties to remove common direct overrides.
+- Cursor is checked BEFORE selection. This prevents an old/stale Docs selection from turning a one-paragraph click into a large expensive range operation.
+- Reset mode merges Normal-text attributes with the selected Heading attributes so inherited Heading properties are included.
+- Granular performance diagnostics now report:
+  - target lookup time
+  - named-style lookup time
+  - formatting-apply time
+  - total Apps Script server time
+  - total client-observed time
+- Reset is intentionally OFF by default because the native Apply path is the fastest possible sidebar implementation.

@@ -100,23 +100,29 @@ function fullSmartFormat(e){
 function styleText(s,e){
  if(!beginTask(e.currentTarget,'…'))return;
 
+ const reset=document.getElementById('resetStyleOverrides').checked;
  const totalStarted=performance.now();
 
  google.script.run
    .withSuccessHandler(r=>{
      r=r||{};
      const count=r.paragraphs||1;
-     const serverMs=Number(r.elapsedMs||0);
      const totalMs=Math.round(performance.now()-totalStarted);
+     const serverMs=Number(r.elapsedMs||0);
+     const targetMs=Number(r.targetMs||0);
+     const lookupMs=Number(r.styleLookupMs||0);
+     const applyMs=Number(r.applyMs||0);
      const mode=r.mode==='single'?'single paragraph':`${count} paragraphs`;
+     const resetLabel=r.resetOverrides?'reset + apply':'fast apply';
 
      endTask(
        true,
-       `Style applied · ${mode} · server ${serverMs} ms · total ${totalMs} ms`
+       `Style · ${resetLabel} · ${mode} · server ${serverMs} ms `+
+       `(target ${targetMs} / style ${lookupMs} / apply ${applyMs}) · total ${totalMs} ms`
      );
    })
    .withFailureHandler(fail)
-   .applyNamedStyle(s);
+   .applyNamedStyle(s,reset);
 }
 function toggleIndentBy(){
  const mode=document.getElementById('indentSpecial').value;

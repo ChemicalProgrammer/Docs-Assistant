@@ -1,81 +1,91 @@
-function applyNamedStyle(styleName) {
+function applyNamedStyle(styleName, resetOverrides) {
   const started = Date.now();
+
+  // IMPORTANT PERFORMANCE RULE:
+  // Prefer a real cursor first. If the user only has a cursor in one line,
+  // do not inspect/expand an old selection.
+  const targetStart = Date.now();
   const targets = getStyleTargetParagraphs_();
+  const targetMs = Date.now() - targetStart;
 
   if (!targets.length) {
-    throw new Error('Select text or place the cursor in the paragraph you want to format.');
+    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
   }
 
-  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
+  const reset = Boolean(resetOverrides);
+  let styleContext = null;
+  let styleLookupMs = 0;
+
+  // Fast mode does NOT read style properties at all.
+  // Reset mode reads them once for the whole operation.
+  if (reset) {
+    const styleStart = Date.now();
+    styleContext = getResetStyleContext_(styleName);
+    styleLookupMs = Date.now() - styleStart;
+  }
+
+  const applyStart = Date.now();
+
+  targets.forEach(p => {
+    applyNamedStyleToParagraph_(p, styleName, reset, styleContext);
+  });
+
+  const applyMs = Date.now() - applyStart;
 
   return {
     ok: true,
     paragraphs: targets.length,
     mode: targets.length === 1 ? 'single' : 'range',
+    resetOverrides: reset,
+    targetMs: targetMs,
+    styleLookupMs: styleLookupMs,
+    applyMs: applyMs,
     elapsedMs: Date.now() - started
   };
 }
 
 /**
- * Cursor-only public route.
- * Uses the exact same low-level formatter as every other named-style caller.
+ * Single low-level named-style formatter used throughout the Add-on.
+ *
+ * FAST MODE:
+ *   exactly one DocumentApp formatting mutation: setHeading().
+ *
+ * RESET MODE:
+ *   setHeading() + one paragraph-attribute write + one text-attribute write.
+ *   The style properties are read once outside this function and reused.
  */
-function applyNamedStyleToCurrentParagraph(styleName) {
-  const started = Date.now();
-  const target = getCurrentParagraph_();
+function applyNamedStyleToParagraph_(paragraph, styleName, resetOverrides, styleContext) {
+  const heading = getParagraphHeadingEnum_(styleName);
 
-  if (!target) {
-    throw new Error('Place the cursor in the paragraph you want to format.');
+  // This is the fastest possible native Apply operation.
+  paragraph.setHeading(heading);
+
+  if (!resetOverrides) {
+    return paragraph;
   }
 
-  applyNamedStyleToParagraph_(target, styleName);
+  const ctx = styleContext || getResetStyleContext_(styleName);
 
-  return {
-    ok: true,
-    paragraphs: 1,
-    mode: 'single',
-    elapsedMs: Date.now() - started
-  };
-}
-
-/**
- * Selection public route.
- * Includes blank paragraphs between the first and last selected paragraph.
- */
-function applyNamedStyleToSelectedParagraphs(styleName) {
-  const started = Date.now();
-  const targets = getSelectedParagraphsIncludingGaps_();
-
-  if (!targets.length) {
-    throw new Error('Select one or more paragraphs first.');
+  // Reapply the effective paragraph properties of the current Named Style.
+  if (
+    ctx.paragraphAttributes &&
+    Object.keys(ctx.paragraphAttributes).length
+  ) {
+    paragraph.setAttributes(ctx.paragraphAttributes);
   }
 
-  targets.forEach(p => applyNamedStyleToParagraph_(p, styleName));
+  // Reapply the effective character properties of the current Named Style.
+  // This removes common direct overrides such as manual bold/font/size.
+  const text = paragraph.editAsText();
+  if (
+    text &&
+    text.getText().length &&
+    ctx.textAttributes &&
+    Object.keys(ctx.textAttributes).length
+  ) {
+    text.setAttributes(ctx.textAttributes);
+  }
 
-  return {
-    ok: true,
-    paragraphs: targets.length,
-    mode: 'range',
-    elapsedMs: Date.now() - started
-  };
-}
-
-/**
- * THE single named-style formatter used by the entire Add-on.
- *
- * It intentionally does not:
- * - read heading attributes;
- * - force font/size/bold;
- * - change capitalization;
- * - change indentation/alignment;
- * - copy direct formatting;
- * - call Gemini.
- *
- * `setHeading()` tells Google Docs to apply the document's CURRENT named
- * style, whatever that style is configured to be.
- */
-function applyNamedStyleToParagraph_(paragraph, styleName) {
-  paragraph.setHeading(getParagraphHeadingEnum_(styleName));
   return paragraph;
 }
 
@@ -99,6 +109,93 @@ function getParagraphHeadingEnum_(styleName) {
   return heading;
 }
 
+/**
+ * Builds an EFFECTIVE visual snapshot for Reset Overrides.
+ * Heading styles can inherit from Normal text, so merge Normal first,
+ * then the selected Heading style.
+ */
+function getResetStyleContext_(styleName) {
+  const body = getActiveBody_();
+  const heading = getParagraphHeadingEnum_(styleName);
+
+  const normalAttrs = body.getHeadingAttributes(
+    DocumentApp.ParagraphHeading.NORMAL
+  ) || {};
+
+  const ownAttrs = styleName === 'NORMAL'
+    ? normalAttrs
+    : (body.getHeadingAttributes(heading) || {});
+
+  const effective = mergeNamedStyleAttributes_(normalAttrs, ownAttrs);
+
+  return {
+    paragraphAttributes: filterParagraphStyleAttributes_(effective),
+    textAttributes: filterTextStyleAttributes_(effective)
+  };
+}
+
+function mergeNamedStyleAttributes_(base, own) {
+  const merged = {};
+
+  Object.keys(base || {}).forEach(key => {
+    if (base[key] !== undefined && base[key] !== null) {
+      merged[key] = base[key];
+    }
+  });
+
+  Object.keys(own || {}).forEach(key => {
+    if (own[key] !== undefined && own[key] !== null) {
+      merged[key] = own[key];
+    }
+  });
+
+  return merged;
+}
+
+function filterParagraphStyleAttributes_(attrs) {
+  const result = {};
+  const supported = [
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT,
+    DocumentApp.Attribute.LINE_SPACING,
+    DocumentApp.Attribute.SPACING_BEFORE,
+    DocumentApp.Attribute.SPACING_AFTER,
+    DocumentApp.Attribute.INDENT_START,
+    DocumentApp.Attribute.INDENT_END,
+    DocumentApp.Attribute.INDENT_FIRST_LINE,
+    DocumentApp.Attribute.KEEP_WITH_NEXT
+  ];
+
+  supported.forEach(attr => {
+    if (attrs[attr] !== undefined && attrs[attr] !== null) {
+      result[attr] = attrs[attr];
+    }
+  });
+
+  return result;
+}
+
+function filterTextStyleAttributes_(attrs) {
+  const result = {};
+  const supported = [
+    DocumentApp.Attribute.FONT_FAMILY,
+    DocumentApp.Attribute.FONT_SIZE,
+    DocumentApp.Attribute.BOLD,
+    DocumentApp.Attribute.ITALIC,
+    DocumentApp.Attribute.UNDERLINE,
+    DocumentApp.Attribute.STRIKETHROUGH,
+    DocumentApp.Attribute.FOREGROUND_COLOR,
+    DocumentApp.Attribute.BACKGROUND_COLOR
+  ];
+
+  supported.forEach(attr => {
+    if (attrs[attr] !== undefined && attrs[attr] !== null) {
+      result[attr] = attrs[attr];
+    }
+  });
+
+  return result;
+}
+
 function getCurrentParagraph_() {
   const doc = DocumentApp.getActiveDocument();
   const cursor = doc.getCursor();
@@ -119,22 +216,22 @@ function getCurrentParagraph_() {
 }
 
 function getStyleTargetParagraphs_() {
-  const doc = DocumentApp.getActiveDocument();
-  const selection = doc.getSelection();
+  // Cursor FIRST is intentional. Clicking the sidebar can leave an old
+  // selection active in Docs; scanning that selection can make a one-line
+  // style click unexpectedly expensive.
+  const current = getCurrentParagraph_();
+  if (current) {
+    return [current];
+  }
 
+  const selection = DocumentApp.getActiveDocument().getSelection();
   if (selection) {
     return getSelectedParagraphsIncludingGaps_();
   }
 
-  const current = getCurrentParagraph_();
-  return current ? [current] : [];
+  return [];
 }
 
-/**
- * Fast inclusive selection collector.
- * For a normal same-container selection, every paragraph/list item from the
- * first selected paragraph to the last is returned, including blank paragraphs.
- */
 function getSelectedParagraphsIncludingGaps_() {
   const selection = DocumentApp.getActiveDocument().getSelection();
   if (!selection) return [];
@@ -142,7 +239,6 @@ function getSelectedParagraphsIncludingGaps_() {
   const ranges = selection.getRangeElements();
   if (!ranges.length) return [];
 
-  // Fast path for the very common one-range / one-paragraph selection.
   if (ranges.length === 1) {
     let one = ranges[0].getElement();
 
@@ -201,7 +297,6 @@ function getSelectedParagraphsIncludingGaps_() {
 
     return result;
   } catch (e) {
-    // Cross-container selection fallback.
     return getSelectedParagraphs_();
   }
 }
