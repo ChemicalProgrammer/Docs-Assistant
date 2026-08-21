@@ -4,7 +4,295 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testApplyStyleToCurrentContext_('HEADING4');
+  return testCreateNewNativeLetterList_();
+}
+
+/**
+ * TEST-012
+ *
+ * Convierte los párrafos seleccionados en una lista nativa
+ * de incisos LATIN_LOWER.
+ *
+ * Debe iniciar una lista nueva:
+ * a), b), c) o el formato equivalente producido por Docs.
+ */
+function testCreateNewNativeLetterList_() {
+  const started = Date.now();
+
+  const document =
+    DocumentApp.getActiveDocument();
+
+  const context =
+    testGetParagraphsFromCurrentContext_(
+      document
+    );
+
+  const targets = context.paragraphs;
+
+  if (!targets.length) {
+    throw new Error(
+      'Selecciona uno o más párrafos o coloca el cursor en uno.'
+    );
+  }
+
+  const updateStarted = Date.now();
+
+  /*
+   * Crear una lista temporal aislada.
+   * Su listId se asignará únicamente a los elementos seleccionados.
+   */
+  const temporary =
+    testCreateIsolatedNativeListAnchor_(
+      targets[0],
+      DocumentApp.GlyphType.LATIN_LOWER
+    );
+
+  const items = [];
+
+  try {
+    targets.forEach(function (target) {
+      const item =
+        testConvertToNativeListItem_(
+          target,
+          temporary.anchor,
+          DocumentApp.GlyphType.LATIN_LOWER
+        );
+
+      items.push(item);
+    });
+  } finally {
+    /*
+     * El listId permanece en los elementos seleccionados
+     * aunque se elimine el elemento temporal.
+     */
+    try {
+      temporary.anchor.removeFromParent();
+    } catch (error) {}
+
+    try {
+      temporary.after.removeFromParent();
+    } catch (error) {}
+
+    try {
+      temporary.before.removeFromParent();
+    } catch (error) {}
+  }
+
+  const updateMs =
+    Date.now() - updateStarted;
+
+  const resultItems = items.map(
+    function (item, index) {
+      return {
+        index: index,
+        text: item.getText(),
+        glyphType: String(
+          item.getGlyphType()
+        ),
+        listId: item.getListId(),
+        nestingLevel:
+          item.getNestingLevel(),
+
+        indentStart:
+          item.getIndentStart(),
+
+        indentFirstLine:
+          item.getIndentFirstLine(),
+
+        indentEnd:
+          item.getIndentEnd()
+      };
+    }
+  );
+
+  const uniqueListIds = {};
+
+  resultItems.forEach(function (item) {
+    uniqueListIds[item.listId] = true;
+  });
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId:
+      'TEST-012-NEW-NATIVE-LETTER-LIST',
+
+    contextType: context.contextType,
+    paragraphsApplied: items.length,
+
+    requestedType: 'LETTER',
+    requestedContinue: false,
+
+    sameListId:
+      Object.keys(uniqueListIds).length === 1,
+
+    expectedIndentInches: {
+      left: 0.25,
+      hanging: 0.25,
+      right: 0
+    },
+
+    items: resultItems,
+
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Crea un ListItem temporal con un listId nuevo y aislado.
+ *
+ * Los párrafos separadores impiden que Google Docs reutilice
+ * accidentalmente la lista anterior o posterior.
+ */
+function testCreateIsolatedNativeListAnchor_(
+  target,
+  glyphType
+) {
+  const parent = target.getParent();
+  const targetIndex =
+    parent.getChildIndex(target);
+
+  const before = parent.insertParagraph(
+    targetIndex,
+    '\uE210'
+  );
+
+  const anchor = parent.insertListItem(
+    targetIndex + 1,
+    '\uE211'
+  );
+
+  const after = parent.insertParagraph(
+    targetIndex + 2,
+    '\uE212'
+  );
+
+  anchor.setNestingLevel(0);
+  anchor.setGlyphType(glyphType);
+
+  return {
+    before: before,
+    anchor: anchor,
+    after: after
+  };
+}
+
+/**
+ * Convierte o reutiliza el elemento seleccionado como ListItem.
+ */
+function testConvertToNativeListItem_(
+  target,
+  anchor,
+  glyphType
+) {
+  let item;
+
+  if (
+    target.getType() ===
+    DocumentApp.ElementType.LIST_ITEM
+  ) {
+    item = target.asListItem();
+  } else {
+    const parent = target.getParent();
+    const index =
+      parent.getChildIndex(target);
+
+    const content =
+      testStripVisibleListPrefix_(
+        target.getText()
+      ).trim();
+
+    item = parent.insertListItem(
+      index,
+      content
+    );
+
+    target.removeFromParent();
+  }
+
+  /*
+   * Todos los elementos reciben el mismo listId,
+   * por lo que pertenecen a la misma lista.
+   */
+  item.setListId(anchor);
+  item.setNestingLevel(0);
+  item.setGlyphType(glyphType);
+
+  /*
+   * Aplicar Normal text usando la solución ya validada.
+   */
+  applyStyleToParagraph_(
+    item,
+    'NORMAL'
+  );
+
+  testApplyRequestedListIndents_(item);
+
+  return item;
+}
+
+/**
+ * Left: 0.25"
+ * Hanging: 0.25"
+ * Right: 0"
+ *
+ * En la geometría de Google Docs:
+ * - indentFirstLine = Left
+ * - indentStart = Left + Hanging
+ */
+function testApplyRequestedListIndents_(
+  item
+) {
+  const pointsPerInch = 72;
+  const left = 0.25;
+  const hanging = 0.25;
+
+  item.setIndentFirstLine(
+    left * pointsPerInch
+  );
+
+  item.setIndentStart(
+    (left + hanging) * pointsPerInch
+  );
+
+  item.setIndentEnd(0);
+}
+
+/**
+ * Elimina prefijos visibles previos para evitar:
+ * "1. a) Texto" o "• a) Texto".
+ *
+ * No afecta la numeración automática porque esa numeración
+ * no forma parte de getText().
+ */
+function testStripVisibleListPrefix_(value) {
+  let text = String(value || '');
+
+  text = text.replace(
+    /^\s*[•●○▪◦‣⁃-]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*\d+[.)]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*[A-Za-z]+[.)]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*[ivxlcdm]+[.)]\s+/i,
+    ''
+  );
+
+  return text;
 }
 
 /**
