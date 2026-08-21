@@ -1,320 +1,276 @@
 /**
- * TEST LAB
+ * TEST-022
  *
- * TEST-021
- * Crea un inciso nativo nuevo a) en la pestaña activa.
+ * Convierte UN párrafo normal en el primer elemento de una lista nativa:
  *
- * Seleccionar únicamente la palabra "Octubre".
+ * a) Octubre
+ *
+ * No utiliza:
+ * - rangos con nombre
+ * - documentos temporales
+ * - DriveApp
+ * - prefijos escritos como texto
  */
-
 function runCurrentTest() {
-  return testCreateIndependentNativeIncisoWithApi_();
+  return testCreateIndependentNativeInciso_();
 }
 
 
-function testCreateIndependentNativeIncisoWithApi_() {
+function testCreateIndependentNativeInciso_() {
   const started = Date.now();
-  const document = DocumentApp.getActiveDocument();
-  const documentId = document.getId();
 
-  const activeTab = document.getActiveTab();
-  const activeTabId = activeTab.getId();
-  const documentTab = activeTab.asDocumentTab();
+  const activeDoc = DocumentApp.getActiveDocument();
+  const documentId = activeDoc.getId();
+  const activeTabId = activeDoc.getActiveTab().getId();
 
-  let selection = document.getSelection();
+  const uniqueId = Utilities.getUuid().replace(/-/g, '');
+  const targetMarker = 'DASTART' + uniqueId;
+  const separatorMarker = 'DASEPARATOR' + uniqueId;
 
-  if (!selection) {
-    throw new Error(
-      'Select only the word Octubre.'
-    );
-  }
+  let apiReadMs = 0;
+  let apiWriteMs = 0;
 
-  const rangeElements = selection.getRangeElements();
+  try {
+    const target = getSingleSelectedParagraph_(activeDoc);
 
-  if (rangeElements.length === 0) {
-    throw new Error('The selection is empty.');
-  }
-
-  const targetParagraph =
-    testFindParagraphAncestor_(
-      rangeElements[0].getElement()
-    );
-
-  if (!targetParagraph) {
-    throw new Error(
-      'No paragraph was found in the selection.'
-    );
-  }
-
-  if (
-    targetParagraph.getType() ===
-    DocumentApp.ElementType.LIST_ITEM
-  ) {
-    throw new Error(
-      'Octubre must be a normal paragraph for this test.'
-    );
-  }
-
-  /*
-   * Limpia residuos de una ejecución anterior fallida.
-   */
-  const targetText = targetParagraph.editAsText();
-
-  if (
-    targetText.getText().charAt(0) === '\t'
-  ) {
-    targetText.deleteText(0, 0);
-  }
-
-  const staleRanges =
-    documentTab.getNamedRanges();
-
-  for (let i = 0; i < staleRanges.length; i++) {
-    if (
-      staleRanges[i]
-        .getName()
-        .indexOf('DOCSASSISTANT_TEST_') === 0
-    ) {
-      staleRanges[i].remove();
+    if (target.getType() !== DocumentApp.ElementType.PARAGRAPH) {
+      throw new Error(
+        'Seleccione solamente un párrafo normal, por ejemplo Octubre.'
+      );
     }
-  }
 
-  /*
-   * Inserta un párrafo invisible antes de Octubre.
-   * Así la API no conecta la lista nueva con la anterior.
-   */
-  const parent = targetParagraph.getParent();
-  const targetIndex =
-    parent.getChildIndex(targetParagraph);
+    if (/[\r\n]/.test(target.getText())) {
+      throw new Error(
+        'Esta prueba acepta un solo párrafo sin saltos de línea internos.'
+      );
+    }
 
-  parent.insertParagraph(
-    targetIndex,
-    '\u200B'
-  );
+    const parent = target.getParent();
 
-  /*
-   * Recupera la selección después de modificar la estructura.
-   */
-  selection =
-    document.getSelection() || selection;
+    if (
+      !parent ||
+      parent.getType() !== DocumentApp.ElementType.BODY_SECTION
+    ) {
+      throw new Error(
+        'Para esta prueba, el párrafo debe estar directamente en el cuerpo del documento.'
+      );
+    }
 
-  const markerName =
-    'DOCSASSISTANT_TEST_' +
-    Utilities.getUuid();
+    /*
+     * El separador impide que Docs una el nuevo inciso con una lista
+     * anterior que tenga el mismo preset.
+     */
+    const targetIndex = parent.getChildIndex(target);
+    parent.insertParagraph(targetIndex, separatorMarker);
 
-  const namedRange =
-    documentTab.addNamedRange(
-      markerName,
-      selection
-    );
+    /*
+     * Un tabulador inicial hace que el preset use el segundo nivel:
+     * nivel 0 = 1)
+     * nivel 1 = a)
+     */
+    target.editAsText().insertText(0, '\t' + targetMarker);
 
-  const namedRangeId =
-    namedRange.getId();
+    /*
+     * A partir de aquí no se vuelve a utilizar ningún objeto obtenido
+     * desde activeDoc, porque el documento quedará cerrado.
+     */
+    activeDoc.saveAndClose();
 
-  /*
-   * Un tabulador inicial genera el nivel 1:
-   * a), b), c)...
-   */
-  targetParagraph
-    .editAsText()
-    .insertText(0, '\t');
+    const readStarted = Date.now();
 
-  document.saveAndClose();
+    const apiDocument = Docs.Documents.get(documentId, {
+      includeTabsContent: true,
+      fields: buildTest022Fields_()
+    });
 
-  const readStarted = Date.now();
+    apiReadMs = Date.now() - readStarted;
 
-  /*
-   * Recupera únicamente:
-   * - ID de las pestañas.
-   * - Rangos nombrados.
-   *
-   * No descarga las 295 páginas.
-   */
-  const apiDocument =
-    Docs.Documents.get(
-      documentId,
-      {
-        includeTabsContent: true,
-        fields:
-          'tabs(' +
-            'tabProperties(tabId),' +
-            'documentTab(namedRanges),' +
-            'childTabs(' +
-              'tabProperties(tabId),' +
-              'documentTab(namedRanges)' +
-            ')' +
-          ')'
-      }
-    );
-
-  const apiReadMs =
-    Date.now() - readStarted;
-
-  const apiNamedRange =
-    testFindNamedRangeInTabs_(
+    const located = findApiParagraphWithMarker_(
       apiDocument.tabs || [],
-      activeTabId,
-      markerName,
-      namedRangeId
+      targetMarker
     );
 
-  if (
-    !apiNamedRange ||
-    !apiNamedRange.ranges ||
-    apiNamedRange.ranges.length === 0
-  ) {
-    throw new Error(
-      'The named range was not found in the active Docs tab.'
-    );
-  }
+    if (!located) {
+      throw new Error(
+        'No se encontró el marcador temporal en la respuesta reducida de Docs API.'
+      );
+    }
 
-  const sourceRange =
-    apiNamedRange.ranges[0];
+    const writeStarted = Date.now();
 
-  const requestRange = {
-    startIndex: sourceRange.startIndex,
-    endIndex: sourceRange.endIndex,
-    tabId: activeTabId
-  };
-
-  const writeStarted = Date.now();
-
-  Docs.Documents.batchUpdate(
-    {
-      requests: [
-        {
-          createParagraphBullets: {
-            range: requestRange,
-            bulletPreset:
-              'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            createParagraphBullets: {
+              range: {
+                startIndex: located.startIndex,
+                endIndex: located.endIndex,
+                tabId: located.tabId
+              },
+              bulletPreset:
+                'NUMBERED_DECIMAL_ALPHA_ROMAN_PARENS'
+            }
           }
-        }
-      ]
-    },
-    documentId
-  );
-
-  const apiWriteMs =
-    Date.now() - writeStarted;
-
-  /*
-   * Reabre exactamente la misma pestaña.
-   */
-  const reopenedDocument =
-    DocumentApp.openById(documentId);
-
-  const reopenedTab =
-    reopenedDocument
-      .getTab(activeTabId)
-      .asDocumentTab();
-
-  const savedNamedRange =
-    reopenedTab.getNamedRangeById(
-      namedRangeId
+        ]
+      },
+      documentId
     );
 
-  if (!savedNamedRange) {
+    apiWriteMs = Date.now() - writeStarted;
+
+    const reopenedDoc = DocumentApp.openById(documentId);
+    const reopenedTab = reopenedDoc.getTab(located.tabId);
+
+    if (!reopenedTab) {
+      throw new Error(
+        'No se pudo volver a abrir la pestaña donde está el párrafo.'
+      );
+    }
+
+    const body = reopenedTab.asDocumentTab().getBody();
+    const markerResult = body.findText(targetMarker);
+
+    if (!markerResult) {
+      throw new Error(
+        'Docs API aplicó la operación, pero no se encontró el párrafo resultante.'
+      );
+    }
+
+    const listItem = findParagraphAncestor_(
+      markerResult.getElement()
+    );
+
+    if (
+      !listItem ||
+      listItem.getType() !== DocumentApp.ElementType.LIST_ITEM
+    ) {
+      throw new Error(
+        'El párrafo resultante no es un elemento de lista nativo.'
+      );
+    }
+
+    /*
+     * El marcador se elimina; nunca queda como parte del texto real.
+     */
+    listItem.replaceText(targetMarker, '');
+
+    /*
+     * Left 0.25", hanging 0.25", right 0".
+     */
+    listItem
+      .setIndentFirstLine(18)
+      .setIndentStart(36)
+      .setIndentEnd(0);
+
+    const separatorRemoved = removeMarkerParagraph_(
+      body,
+      separatorMarker
+    );
+
+    const result = {
+      testId: 'TEST-022-NATIVE-INDEPENDENT-INCISO',
+      ok: true,
+      isNative: true,
+      glyphType: String(listItem.getGlyphType()),
+      nestingLevel: listItem.getNestingLevel(),
+      listId: listItem.getListId(),
+      separatorRemoved: separatorRemoved,
+      apiReadMs: apiReadMs,
+      apiWriteMs: apiWriteMs,
+      elapsedMs: Date.now() - started
+    };
+
+    reopenedDoc.saveAndClose();
+    return result;
+
+  } catch (error) {
+    cleanupTest022Markers_(
+      documentId,
+      activeTabId,
+      targetMarker,
+      separatorMarker
+    );
+
     throw new Error(
-      'The named range could not be reopened.'
+      'TEST-022: ' + (error && error.message
+        ? error.message
+        : String(error))
     );
   }
+}
 
-  const updatedElements =
-    savedNamedRange
-      .getRange()
-      .getRangeElements();
 
-  let listItem = null;
+/**
+ * Obtiene un único párrafo desde una selección o desde el cursor.
+ */
+function getSingleSelectedParagraph_(doc) {
+  const selection = doc.getSelection();
 
-  for (
-    let i = 0;
-    i < updatedElements.length;
-    i++
-  ) {
-    listItem =
-      testFindListItemAncestor_(
-        updatedElements[i].getElement()
+  if (selection) {
+    const rangeElements = selection.getRangeElements();
+    let selectedParagraph = null;
+
+    for (let i = 0; i < rangeElements.length; i++) {
+      const paragraph = findParagraphAncestor_(
+        rangeElements[i].getElement()
       );
 
-    if (listItem) {
-      break;
+      if (!paragraph) {
+        continue;
+      }
+
+      if (!selectedParagraph) {
+        selectedParagraph = paragraph;
+        continue;
+      }
+
+      if (!sameDocumentElement_(selectedParagraph, paragraph)) {
+        throw new Error(
+          'Seleccione solamente un párrafo para esta prueba.'
+        );
+      }
+    }
+
+    if (selectedParagraph) {
+      return selectedParagraph;
     }
   }
 
-  if (!listItem) {
+  const cursor = doc.getCursor();
+
+  if (!cursor) {
     throw new Error(
-      'The API did not create a native list item.'
+      'Seleccione un párrafo normal o coloque el cursor dentro de él.'
     );
   }
 
-  listItem
-    .setIndentFirstLine(18)
-    .setIndentStart(36)
-    .setIndentEnd(0);
+  const cursorParagraph = findParagraphAncestor_(
+    cursor.getElement()
+  );
 
-  /*
-   * Retira el separador invisible.
-   * Los List ID ya fueron creados y permanecen separados.
-   */
-  const previousSibling =
-    listItem.getPreviousSibling();
-
-  let separatorRemoved = false;
-
-  if (
-    previousSibling &&
-    previousSibling.getType() ===
-      DocumentApp.ElementType.PARAGRAPH &&
-    previousSibling.getText() === '\u200B'
-  ) {
-    previousSibling.removeFromParent();
-    separatorRemoved = true;
+  if (!cursorParagraph) {
+    throw new Error(
+      'No se pudo identificar el párrafo que contiene el cursor.'
+    );
   }
 
-  const result = {
-    testId:
-      'TEST-021-INDEPENDENT-NATIVE-INCISO',
-
-    ok: true,
-    text: listItem.getText(),
-    listId: listItem.getListId(),
-    glyphType:
-      String(listItem.getGlyphType()),
-    nestingLevel:
-      listItem.getNestingLevel(),
-    isNative:
-      listItem.getType() ===
-      DocumentApp.ElementType.LIST_ITEM,
-    separatorRemoved: separatorRemoved,
-    indentFirstLine:
-      listItem.getIndentFirstLine(),
-    indentStart:
-      listItem.getIndentStart(),
-    indentEnd:
-      listItem.getIndentEnd(),
-    apiReadMs: apiReadMs,
-    apiWriteMs: apiWriteMs,
-    elapsedMs: Date.now() - started
-  };
-
-  savedNamedRange.remove();
-  reopenedDocument.saveAndClose();
-
-  return result;
+  return cursorParagraph;
 }
 
 
-function testFindParagraphAncestor_(element) {
+/**
+ * Sube desde Text hasta Paragraph o ListItem.
+ */
+function findParagraphAncestor_(element) {
   let current = element;
 
   while (current) {
     const type = current.getType();
 
     if (
-      type ===
-        DocumentApp.ElementType.PARAGRAPH ||
-      type ===
-        DocumentApp.ElementType.LIST_ITEM
+      type === DocumentApp.ElementType.PARAGRAPH ||
+      type === DocumentApp.ElementType.LIST_ITEM
     ) {
       return current;
     }
@@ -326,72 +282,110 @@ function testFindParagraphAncestor_(element) {
 }
 
 
-function testFindListItemAncestor_(element) {
-  let current = element;
-
-  while (current) {
-    if (
-      current.getType() ===
-      DocumentApp.ElementType.LIST_ITEM
-    ) {
-      return current.asListItem();
-    }
-
-    current = current.getParent();
+/**
+ * Compara dos referencias sin depender de la igualdad de proxies.
+ */
+function sameDocumentElement_(first, second) {
+  if (first === second) {
+    return true;
   }
 
-  return null;
+  const firstParent = first.getParent();
+  const secondParent = second.getParent();
+
+  if (!firstParent || firstParent !== secondParent) {
+    return false;
+  }
+
+  return firstParent.getChildIndex(first) ===
+    secondParent.getChildIndex(second);
 }
 
 
-function testFindNamedRangeInTabs_(
-  tabs,
-  activeTabId,
-  markerName,
-  namedRangeId
-) {
+/**
+ * Field mask reducido.
+ *
+ * Incluye solamente:
+ * - identificador de pestaña
+ * - índices de párrafos
+ * - contenido de textRun
+ *
+ * Se contemplan hasta cuatro niveles de pestañas anidadas.
+ */
+function buildTest022Fields_() {
+  return 'tabs(' + buildTest022TabFields_(4) + ')';
+}
+
+
+function buildTest022TabFields_(remainingDepth) {
+  let fields =
+    'tabProperties(tabId),' +
+    'documentTab(' +
+      'body(' +
+        'content(' +
+          'startIndex,' +
+          'endIndex,' +
+          'paragraph(' +
+            'elements(' +
+              'textRun(content)' +
+            ')' +
+          ')' +
+        ')' +
+      ')' +
+    ')';
+
+  if (remainingDepth > 0) {
+    fields +=
+      ',childTabs(' +
+        buildTest022TabFields_(remainingDepth - 1) +
+      ')';
+  }
+
+  return fields;
+}
+
+
+/**
+ * Busca el marcador dentro de todas las pestañas devueltas por Docs API.
+ */
+function findApiParagraphWithMarker_(tabs, marker) {
   for (let i = 0; i < tabs.length; i++) {
     const tab = tabs[i];
-    const tabId =
-      tab.tabProperties &&
-      tab.tabProperties.tabId;
+    const tabId = tab.tabProperties
+      ? tab.tabProperties.tabId
+      : null;
 
-    if (
-      tabId === activeTabId &&
+    const content =
       tab.documentTab &&
-      tab.documentTab.namedRanges
-    ) {
-      const group =
-        tab.documentTab
-          .namedRanges[markerName];
+      tab.documentTab.body &&
+      tab.documentTab.body.content
+        ? tab.documentTab.body.content
+        : [];
 
-      const namedRanges =
-        group &&
-        group.namedRanges
-          ? group.namedRanges
-          : [];
+    for (let j = 0; j < content.length; j++) {
+      const structuralElement = content[j];
 
-      for (
-        let j = 0;
-        j < namedRanges.length;
-        j++
-      ) {
-        if (
-          namedRanges[j].namedRangeId ===
-          namedRangeId
-        ) {
-          return namedRanges[j];
-        }
+      if (!structuralElement.paragraph) {
+        continue;
+      }
+
+      const paragraphText = getApiParagraphText_(
+        structuralElement.paragraph
+      );
+
+      if (paragraphText.indexOf(marker) !== -1) {
+        return {
+          tabId: tabId,
+          startIndex: structuralElement.startIndex,
+          endIndex: structuralElement.endIndex
+        };
       }
     }
 
-    const childResult =
-      testFindNamedRangeInTabs_(
-        tab.childTabs || [],
-        activeTabId,
-        markerName,
-        namedRangeId
-      );
+    const childResult = findApiParagraphWithMarker_(
+      tab.childTabs || [],
+      marker
+    );
 
     if (childResult) {
       return childResult;
@@ -399,4 +393,90 @@ function testFindNamedRangeInTabs_(
   }
 
   return null;
+}
+
+
+function getApiParagraphText_(paragraph) {
+  const elements = paragraph.elements || [];
+  let text = '';
+
+  for (let i = 0; i < elements.length; i++) {
+    if (elements[i].textRun) {
+      text += elements[i].textRun.content || '';
+    }
+  }
+
+  return text;
+}
+
+
+/**
+ * Elimina el párrafo separador temporal.
+ */
+function removeMarkerParagraph_(body, marker) {
+  const result = body.findText(marker);
+
+  if (!result) {
+    return false;
+  }
+
+  const paragraph = findParagraphAncestor_(
+    result.getElement()
+  );
+
+  if (!paragraph) {
+    return false;
+  }
+
+  paragraph.removeFromParent();
+  return true;
+}
+
+
+/**
+ * Limpieza de emergencia si cualquier fase falla.
+ */
+function cleanupTest022Markers_(
+  documentId,
+  tabId,
+  targetMarker,
+  separatorMarker
+) {
+  try {
+    const doc = DocumentApp.openById(documentId);
+    const tab = doc.getTab(tabId);
+
+    if (!tab) {
+      return;
+    }
+
+    const body = tab.asDocumentTab().getBody();
+
+    const targetResult = body.findText(targetMarker);
+
+    if (targetResult) {
+      const paragraph = findParagraphAncestor_(
+        targetResult.getElement()
+      );
+
+      if (paragraph) {
+        paragraph.replaceText(targetMarker, '');
+
+        const text = paragraph.editAsText();
+
+        if (
+          text.getText().length > 0 &&
+          text.getText().charAt(0) === '\t'
+        ) {
+          text.deleteText(0, 0);
+        }
+      }
+    }
+
+    removeMarkerParagraph_(body, separatorMarker);
+    doc.saveAndClose();
+
+  } catch (cleanupError) {
+    // No ocultar el error original.
+  }
 }
