@@ -1144,6 +1144,36 @@ function getSelectedParagraphs_() {
   return paragraphs;
 }
 
+/**
+ * Returns every paragraph/ListItem targeted by the current selection, or the
+ * paragraph that owns the cursor when there is no selection.
+ *
+ * This shared selector is intentionally based only on DocumentApp. It is used
+ * by indentation, spacing, equations, captions and notes.
+ */
+function getStyleTargetParagraphs_() {
+  const doc = DocumentApp.getActiveDocument();
+  const selection = doc.getSelection();
+
+  if (selection) {
+    return getSelectedParagraphs_();
+  }
+
+  const cursor = doc.getCursor();
+  if (!cursor) return [];
+
+  const paragraph = getOwningParagraph_(cursor.getElement());
+  return paragraph ? [paragraph] : [];
+}
+
+/**
+ * Returns only the paragraph/ListItem that owns the cursor.
+ */
+function getCurrentParagraph_() {
+  const cursor = DocumentApp.getActiveDocument().getCursor();
+  return cursor ? getOwningParagraph_(cursor.getElement()) : null;
+}
+
 function eachSelectedParagraph_(fn) {
   const paragraphs = getStyleTargetParagraphs_();
   if (!paragraphs.length) {
@@ -1297,6 +1327,50 @@ function getNextEquationNumberBeforeIndex_(body, targetIndex) {
   }
 
   return maxNumber + 1;
+}
+
+/**
+ * Identifies the one-row, three-cell layout table created by
+ * formatEquationLine(). The label pattern is used instead of border width so
+ * the table remains identifiable even if its borders were changed later.
+ */
+function isEquationLayoutTable_(table) {
+  try {
+    if (!table || table.getNumRows() !== 1) return false;
+
+    const row = table.getRow(0);
+    if (row.getNumCells() !== 3) return false;
+
+    const leftText = String(row.getCell(0).getText() || '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+    const rightText = String(row.getCell(2).getText() || '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+
+    return (
+      leftText === '' &&
+      /^\.{10,}\s*Equation\s+\d+\s*$/i.test(rightText)
+    );
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Returns true only for physical tables that must advance Table caption
+ * numbering. Equation layout tables are intentionally excluded.
+ */
+function isCountableCaptionTable_(element) {
+  if (
+    !element ||
+    !element.getType ||
+    element.getType() !== DocumentApp.ElementType.TABLE
+  ) {
+    return false;
+  }
+
+  return !isEquationLayoutTable_(element.asTable());
 }
 
 function formatSelectedTable() {
@@ -1896,7 +1970,7 @@ function getCaptionCounterAnchorObjectIndex_(type, parent) {
     const child = parent.getChild(i);
     const matches =
       normalized === 'Table'
-        ? child.getType() === DocumentApp.ElementType.TABLE
+        ? isCountableCaptionTable_(child)
         : isStandaloneFigureBlock_(child);
 
     if (!matches) continue;
@@ -1995,7 +2069,7 @@ function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
       const child = parent.getChild(i);
       const matches =
         normalized === 'Table'
-          ? child.getType() === DocumentApp.ElementType.TABLE
+          ? isCountableCaptionTable_(child)
           : isStandaloneFigureBlock_(child);
 
       if (matches) count++;
@@ -2017,7 +2091,7 @@ function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
     const child = parent.getChild(i);
     const matches =
       normalized === 'Table'
-        ? child.getType() === DocumentApp.ElementType.TABLE
+        ? isCountableCaptionTable_(child)
         : isStandaloneFigureBlock_(child);
 
     if (matches) relativeCount++;
@@ -2095,7 +2169,7 @@ function getTableCaptionOrdinal_(targetParagraph) {
 
   for (let i = 0; i < parent.getNumChildren(); i++) {
     const child = parent.getChild(i);
-    if (child.getType() !== DocumentApp.ElementType.TABLE) continue;
+    if (!isCountableCaptionTable_(child)) continue;
 
     const distance = Math.abs(i - targetIndex);
 
@@ -2120,7 +2194,7 @@ function getTableCaptionOrdinal_(targetParagraph) {
   if (anchored === null) {
     let count = 0;
     for (let i = 0; i <= nearestTableIndex; i++) {
-      if (parent.getChild(i).getType() === DocumentApp.ElementType.TABLE) count++;
+      if (isCountableCaptionTable_(parent.getChild(i))) count++;
     }
     return Math.max(1, count);
   }
