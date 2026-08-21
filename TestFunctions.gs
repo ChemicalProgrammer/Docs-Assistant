@@ -4,7 +4,135 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testLocateWithTemporaryNamedRange_();
+  return testResetH4WithNullAttributes_();
+}
+
+/**
+ * TEST-007
+ *
+ * Intenta eliminar los overrides directamente con DocumentApp,
+ * sin utilizar la API avanzada ni recorrer el documento.
+ *
+ * Esta prueba SÍ debe cambiar visualmente el párrafo.
+ */
+function testResetH4WithNullAttributes_() {
+  const started = Date.now();
+
+  const document = DocumentApp.getActiveDocument();
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'Coloca el cursor dentro de un párrafo, sin seleccionar texto.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error('No se pudo localizar el párrafo actual.');
+  }
+
+  const beforeHeading = String(paragraph.getHeading());
+  const paragraphText = paragraph.getText();
+
+  /*
+   * No incluimos LINK_URL para conservar los hipervínculos.
+   * Tampoco incluimos HEADING porque se aplicará H4 después.
+   */
+  const resetAttributes = {};
+
+  resetAttributes[
+    DocumentApp.Attribute.FONT_FAMILY
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.FONT_SIZE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.FOREGROUND_COLOR
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.BACKGROUND_COLOR
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.BOLD
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.ITALIC
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.UNDERLINE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.STRIKETHROUGH
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_START
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_END
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_FIRST_LINE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.LINE_SPACING
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.SPACING_BEFORE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.SPACING_AFTER
+  ] = null;
+
+  const updateStarted = Date.now();
+
+  /*
+   * Intentar eliminar los atributos directos.
+   */
+  paragraph.setAttributes(resetAttributes);
+
+  /*
+   * Aplicar posteriormente el estilo nombrado H4.
+   */
+  paragraph.setHeading(
+    DocumentApp.ParagraphHeading.HEADING4
+  );
+
+  const updateMs = Date.now() - updateStarted;
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId: 'TEST-007-NULL-ATTRIBUTE-RESET',
+    beforeHeading: beforeHeading,
+    afterHeading: 'HEADING4',
+    textLength: paragraphText.length,
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started,
+    message:
+      'Null attributes were applied and the paragraph was set to H4.'
+  };
 }
 
 /**
