@@ -4,7 +4,7 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testResetH4AtKnownRange_();
+  return testCalculateApiRangeLocally_();
 }
 
 /**
@@ -362,6 +362,212 @@ function testLocateParagraphWithApi_() {
     message: 'The paragraph API range was located successfully.'
   };
 }
+/**
+ * TEST 005
+ * Calcula localmente los índices de la API.
+ * No lee la Docs API y no modifica el documento.
+ */
+function testCalculateApiRangeLocally_() {
+  const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const cursor = doc.getCursor();
 
+  if (!cursor) {
+    throw new Error(
+      'No cursor detected. Click inside one paragraph without selecting text.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error(
+      'The cursor is not inside a Paragraph or ListItem.'
+    );
+  }
+
+  let body = doc.getBody();
+
+  try {
+    const tab = doc.getActiveTab();
+
+    if (tab && typeof tab.asDocumentTab === 'function') {
+      body = tab.asDocumentTab().getBody();
+    }
+  } catch (error) {}
+
+  const childIndex = body.getChildIndex(paragraph);
+
+  /*
+   * La API reserva el índice 0 para el section break inicial.
+   * El primer elemento visible comienza en el índice 1.
+   */
+  let predictedStart = 1;
+
+  const stats = {
+    paragraphs: 0,
+    tables: 0,
+    cells: 0,
+    specialElements: 0
+  };
+
+  for (let i = 0; i < childIndex; i++) {
+    predictedStart += testApiStructuralLength_(
+      body.getChild(i),
+      stats
+    );
+  }
+
+  const targetLength = testApiStructuralLength_(
+    paragraph,
+    stats
+  );
+
+  const predictedEnd = predictedStart + targetLength;
+
+  // Valores reales obtenidos en TEST-003.
+  const knownStart = 29973;
+  const knownEnd = 30003;
+
+  const startMatches = predictedStart === knownStart;
+  const endMatches = predictedEnd === knownEnd;
+
+  return {
+    ok: startMatches && endMatches,
+    testId: 'TEST-005-LOCAL-RANGE-CALCULATION',
+    childIndex: childIndex,
+    predictedStart: predictedStart,
+    predictedEnd: predictedEnd,
+    knownStart: knownStart,
+    knownEnd: knownEnd,
+    startDifference: predictedStart - knownStart,
+    endDifference: predictedEnd - knownEnd,
+    targetLength: targetLength,
+    paragraphsScanned: stats.paragraphs,
+    tablesScanned: stats.tables,
+    tableCellsScanned: stats.cells,
+    specialElements: stats.specialElements,
+    apiReadMs: 0,
+    elapsedMs: Date.now() - started,
+    message: startMatches && endMatches
+      ? 'The local API range matches exactly.'
+      : 'The local range requires an index adjustment.'
+  };
+}
+
+function testApiStructuralLength_(element, stats) {
+  const type = String(element.getType());
+
+  if (type === 'PARAGRAPH' || type === 'LIST_ITEM') {
+    stats.paragraphs++;
+    return testApiParagraphLength_(element, stats);
+  }
+
+  if (type === 'TABLE') {
+    stats.tables++;
+    return testApiTableLength_(element, stats);
+  }
+
+  if (type === 'TABLE_OF_CONTENTS') {
+    let length = 1;
+
+    for (let i = 0; i < element.getNumChildren(); i++) {
+      length += testApiStructuralLength_(
+        element.getChild(i),
+        stats
+      );
+    }
+
+    return length;
+  }
+
+  /*
+   * Otros elementos estructurales ocupan normalmente una unidad
+   * dentro del modelo de índices.
+   */
+  stats.specialElements++;
+  return 1;
+}
+
+function testApiParagraphLength_(paragraph, stats) {
+  // Un carácter adicional corresponde al salto de línea del párrafo.
+  let length = 1;
+
+  const oneUnitTypes = [
+    'INLINE_IMAGE',
+    'PAGE_BREAK',
+    'COLUMN_BREAK',
+    'HORIZONTAL_RULE',
+    'FOOTNOTE',
+    'EQUATION',
+    'PERSON',
+    'RICH_LINK',
+    'DATE',
+    'DATE_ELEMENT',
+    'AUTO_TEXT'
+  ];
+
+  for (let i = 0; i < paragraph.getNumChildren(); i++) {
+    const child = paragraph.getChild(i);
+    const type = String(child.getType());
+
+    if (type === 'TEXT') {
+      length += String(child.getText() || '').length;
+      continue;
+    }
+
+    if (oneUnitTypes.indexOf(type) >= 0) {
+      length++;
+      stats.specialElements++;
+      continue;
+    }
+
+    if (typeof child.getText === 'function') {
+      length += String(child.getText() || '').length;
+    } else {
+      length++;
+      stats.specialElements++;
+    }
+  }
+
+  return length;
+}
+
+function testApiTableLength_(table, stats) {
+  /*
+   * Modelo de índices:
+   * 1 unidad para la tabla;
+   * 1 unidad por fila;
+   * 1 unidad por celda;
+   * más el contenido estructural de cada celda.
+   */
+  let length = 1;
+
+  for (let rowIndex = 0; rowIndex < table.getNumRows(); rowIndex++) {
+    const row = table.getRow(rowIndex);
+
+    length++;
+
+    for (let cellIndex = 0; cellIndex < row.getNumCells(); cellIndex++) {
+      const cell = row.getCell(cellIndex);
+
+      stats.cells++;
+      length++;
+
+      for (
+        let childIndex = 0;
+        childIndex < cell.getNumChildren();
+        childIndex++
+      ) {
+        length += testApiStructuralLength_(
+          cell.getChild(childIndex),
+          stats
+        );
+      }
+    }
+  }
+
+  return length;
+}
 
 
