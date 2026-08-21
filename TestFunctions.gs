@@ -4,7 +4,149 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testResetH4WithNullAttributes_();
+  return testForceHeading4Transition_();
+}
+
+/**
+ * TEST-008
+ *
+ * Fuerza la transición:
+ *
+ * NORMAL → limpiar overrides → HEADING4
+ *
+ * Esta prueba SÍ debe modificar visualmente el párrafo.
+ */
+function testForceHeading4Transition_() {
+  const started = Date.now();
+
+  const document = DocumentApp.getActiveDocument();
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'Coloca el cursor dentro de un párrafo, sin seleccionar texto.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(cursor.getElement());
+
+  if (!paragraph) {
+    throw new Error('No se pudo localizar el párrafo actual.');
+  }
+
+  const text = paragraph.editAsText();
+  const textLength = text.getText().length;
+
+  const before = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine: paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  /*
+   * Atributos directos del texto que deben volver a heredarse.
+   * LINK_URL se omite para conservar hipervínculos.
+   */
+  const textReset = {};
+
+  textReset[DocumentApp.Attribute.FONT_FAMILY] = null;
+  textReset[DocumentApp.Attribute.FONT_SIZE] = null;
+  textReset[DocumentApp.Attribute.FOREGROUND_COLOR] = null;
+  textReset[DocumentApp.Attribute.BACKGROUND_COLOR] = null;
+  textReset[DocumentApp.Attribute.BOLD] = null;
+  textReset[DocumentApp.Attribute.ITALIC] = null;
+  textReset[DocumentApp.Attribute.UNDERLINE] = null;
+  textReset[DocumentApp.Attribute.STRIKETHROUGH] = null;
+
+  /*
+   * Overrides propios del párrafo.
+   */
+  const paragraphReset = {};
+
+  paragraphReset[
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.INDENT_START
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.INDENT_END
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.INDENT_FIRST_LINE
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.LINE_SPACING
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.SPACING_BEFORE
+  ] = null;
+
+  paragraphReset[
+    DocumentApp.Attribute.SPACING_AFTER
+  ] = null;
+
+  const updateStarted = Date.now();
+
+  /*
+   * Forzar un cambio real de estilo.
+   */
+  paragraph.setHeading(
+    DocumentApp.ParagraphHeading.NORMAL
+  );
+
+  /*
+   * Borrar overrides mientras el párrafo está en Normal.
+   */
+  paragraph.setAttributes(paragraphReset);
+
+  if (textLength > 0) {
+    text.setAttributes(
+      0,
+      textLength - 1,
+      textReset
+    );
+  }
+
+  /*
+   * Aplicar finalmente el estilo configurado en el documento.
+   */
+  paragraph.setHeading(
+    DocumentApp.ParagraphHeading.HEADING4
+  );
+
+  const updateMs = Date.now() - updateStarted;
+
+  const after = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine: paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId: 'TEST-008-FORCE-H4-TRANSITION',
+    before: before,
+    after: after,
+    textLength: textLength,
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
 }
 
 /**
