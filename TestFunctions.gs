@@ -39,21 +39,10 @@ function runCurrentTest() {
   };
 }
 
-
-/**
- * Candidato optimizado.
- *
- * Agrupa los atributos de celda y párrafo
- * para reducir llamadas a DocumentApp.
- */
 function testFastTableFormatting_(table) {
   const PT_PER_IN = 72;
-  const attribute =
-    DocumentApp.Attribute;
+  const attribute = DocumentApp.Attribute;
 
-  /*
-   * Atributos comunes de las celdas.
-   */
   const cellAttributes = {};
 
   cellAttributes[
@@ -78,20 +67,39 @@ function testFastTableFormatting_(table) {
 
 
   /*
-   * Atributos del encabezado.
+   * Párrafos normales:
+   * Left indent = 0.05 in.
    */
-  const headerAttributes =
+  const headerParagraphAttributes =
     buildTestTableParagraphAttributes_(
+      true,
+      false,
+      PT_PER_IN
+    );
+
+  const bodyParagraphAttributes =
+    buildTestTableParagraphAttributes_(
+      false,
+      false,
+      PT_PER_IN
+    );
+
+
+  /*
+   * Elementos de lista:
+   * todos los indentados en cero.
+   */
+  const headerListAttributes =
+    buildTestTableParagraphAttributes_(
+      true,
       true,
       PT_PER_IN
     );
 
-  /*
-   * Atributos del contenido.
-   */
-  const bodyAttributes =
+  const bodyListAttributes =
     buildTestTableParagraphAttributes_(
       false,
+      true,
       PT_PER_IN
     );
 
@@ -116,16 +124,19 @@ function testFastTableFormatting_(table) {
       0.49 * PT_PER_IN
     );
 
-    const isHeader =
-      rowIndex === 0;
+    const isHeader = rowIndex === 0;
 
     const paragraphAttributes =
       isHeader
-        ? headerAttributes
-        : bodyAttributes;
+        ? headerParagraphAttributes
+        : bodyParagraphAttributes;
 
-    const cellCount =
-      row.getNumCells();
+    const listAttributes =
+      isHeader
+        ? headerListAttributes
+        : bodyListAttributes;
+
+    const cellCount = row.getNumCells();
 
     cells += cellCount;
 
@@ -134,21 +145,12 @@ function testFastTableFormatting_(table) {
       cellIndex < cellCount;
       cellIndex++
     ) {
-      const cell =
-        row.getCell(cellIndex);
+      const cell = row.getCell(cellIndex);
 
-      /*
-       * Padding y alineación vertical
-       * en una sola operación.
-       */
       cell.setAttributes(
         cellAttributes
       );
 
-      /*
-       * Elimina únicamente el color
-       * directo de fondo.
-       */
       cell.setBackgroundColor(null);
 
       for (
@@ -180,7 +182,7 @@ function testFastTableFormatting_(table) {
           child
             .asListItem()
             .setAttributes(
-              paragraphAttributes
+              listAttributes
             );
 
           listItems++;
@@ -193,17 +195,15 @@ function testFastTableFormatting_(table) {
     rows: rows,
     cells: cells,
     paragraphs: paragraphs,
-    listItems: listItems
+    listItems: listItems,
+    listIndentPoints: 0
   };
 }
 
 
-/**
- * Construye todos los atributos de un párrafo
- * de tabla para aplicarlos en una sola llamada.
- */
 function buildTestTableParagraphAttributes_(
   isHeader,
+  isListItem,
   pointsPerInch
 ) {
   const attribute =
@@ -229,9 +229,18 @@ function buildTestTableParagraphAttributes_(
     attribute.SPACING_AFTER
   ] = 0;
 
+  /*
+   * ListItem = 0
+   * Paragraph = 0.05 in
+   */
+  const indent =
+    isListItem
+      ? 0
+      : 0.05 * pointsPerInch;
+
   attributes[
     attribute.INDENT_START
-  ] = 0.05 * pointsPerInch;
+  ] = indent;
 
   attributes[
     attribute.INDENT_END
@@ -239,7 +248,7 @@ function buildTestTableParagraphAttributes_(
 
   attributes[
     attribute.INDENT_FIRST_LINE
-  ] = 0.05 * pointsPerInch;
+  ] = indent;
 
   attributes[
     attribute.FONT_FAMILY
