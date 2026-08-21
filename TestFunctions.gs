@@ -75,124 +75,124 @@ function getCurrentParagraph_() {
  * Debes colocar el cursor en una línea real
  * que quieras convertir en ecuación.
  */
+/**
+ * Comprueba el conteo después de haber creado
+ * una tabla auxiliar de ecuación real.
+ *
+ * No modifica el documento.
+ */
 function runCurrentTest() {
   const started = Date.now();
 
   const body =
     getActiveBody_();
 
-  const targets =
-    getStyleTargetParagraphs_();
+  const selectedTable =
+    getActiveTable_();
 
-  if (targets.length !== 1) {
+  if (!selectedTable) {
     throw new Error(
-      'Place the cursor in one equation line or select only that line.'
+      'Place the cursor inside a real table located after the equation.'
     );
   }
 
-  const source =
-    targets[0];
+  let selectedTableIndex;
 
-  const top =
-    getTopLevelBodyElement_(
-      source,
-      body
+  try {
+    selectedTableIndex =
+      body.getChildIndex(
+        selectedTable
+      );
+  } catch (error) {
+    throw new Error(
+      'The selected table must be a body-level table.'
     );
+  }
 
-  if (
-    !top ||
-    top.getType() !==
-      DocumentApp.ElementType.PARAGRAPH
+  let physicalTables = 0;
+  let equationLayoutTablesIgnored = 0;
+  let countableTables = 0;
+
+  let rawOrdinal = 0;
+  let correctedOrdinal = 0;
+
+  for (
+    let childIndex = 0;
+    childIndex < body.getNumChildren();
+    childIndex++
   ) {
-    throw new Error(
-      'The equation line must be a body-level normal paragraph.'
-    );
+    const child =
+      body.getChild(childIndex);
+
+    if (
+      child.getType() !==
+      DocumentApp.ElementType.TABLE
+    ) {
+      continue;
+    }
+
+    physicalTables++;
+
+    const isEquationLayout =
+      testIsEquationLayoutTable_(
+        child.asTable()
+      );
+
+    if (isEquationLayout) {
+      equationLayoutTablesIgnored++;
+    } else {
+      countableTables++;
+    }
+
+    if (
+      childIndex <= selectedTableIndex
+    ) {
+      rawOrdinal++;
+
+      if (!isEquationLayout) {
+        correctedOrdinal++;
+      }
+    }
   }
 
-  const sourceIndex =
-    body.getChildIndex(top);
-
-  const tablesBefore =
-    testCountBodyTables_(body);
-
-  /*
-   * Ejecuta la función real de producción.
-   */
-  const formatterResult =
-    formatEquationLine();
-
-  /*
-   * formatEquationLine() inserta la tabla
-   * en la posición del párrafo original.
-   */
-  const createdElement =
-    body.getChild(sourceIndex);
-
-  const createdIsTable =
-    createdElement.getType() ===
-      DocumentApp.ElementType.TABLE;
-
-  const createdTable =
-    createdIsTable
-      ? createdElement.asTable()
-      : null;
-
-  const detectedAsEquationLayout =
-    createdTable
-      ? testIsEquationLayoutTable_(
-          createdTable
-        )
-      : false;
-
-  const tablesAfter =
-    testCountBodyTables_(body);
+  const selectedIsEquationLayout =
+    testIsEquationLayoutTable_(
+      selectedTable
+    );
 
   return {
     ok:
-      createdIsTable &&
-      detectedAsEquationLayout,
+      !selectedIsEquationLayout &&
+      equationLayoutTablesIgnored >= 1,
 
     testId:
-      'EQUATION-CREATION-AND-DETECTION',
+      'REAL-GHOST-TABLE-COUNTING',
 
-    equationNumber:
-      formatterResult.equationNumber,
+    physicalTables:
+      physicalTables,
 
-    createdAtBodyChildIndex:
-      sourceIndex,
+    equationLayoutTablesIgnored:
+      equationLayoutTablesIgnored,
 
-    createdIsTable:
-      createdIsTable,
+    countableTables:
+      countableTables,
 
-    createdRows:
-      createdTable
-        ? createdTable.getNumRows()
-        : null,
+    selectedTableIsEquationLayout:
+      selectedIsEquationLayout,
 
-    createdFirstRowCells:
-      createdTable
-        ? createdTable
-            .getRow(0)
-            .getNumCells()
-        : null,
+    selectedTableRawOrdinal:
+      rawOrdinal,
 
-    equationLayoutDetected:
-      detectedAsEquationLayout,
+    selectedTableCorrectedOrdinal:
+      correctedOrdinal,
 
-    wouldBeCountedAsCaptionTable:
-      createdIsTable &&
-      !detectedAsEquationLayout,
-
-    physicalTablesBefore:
-      tablesBefore,
-
-    physicalTablesAfter:
-      tablesAfter,
-
-    physicalTableDelta:
-      tablesAfter - tablesBefore,
+    numbersDifferBy:
+      rawOrdinal - correctedOrdinal,
 
     usesAdvancedDocsApi:
+      false,
+
+    modifiesDocument:
       false,
 
     elapsedMs:
