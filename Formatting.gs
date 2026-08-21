@@ -1,29 +1,30 @@
 /**
- * A) APPLY STYLE TO ONE PARAGRAPH
+ * A) APPLY ONE DOCUMENT NAMED STYLE WITHOUT DIRECT-FORMATTING OVERRIDES
  * Arguments: paragraph + styleName.
  *
- * Reset strategy: Normal text -> requested style.
- * No property inspection or manual reconstruction.
+ * DocumentApp.setHeading() changes the named style but does not remove direct
+ * text/paragraph formatting. The Advanced Docs service resets those direct
+ * fields so the paragraph inherits the document's current Named Style.
  */
 function applyStyleToParagraph_(paragraph, styleName) {
   if (!paragraph) return null;
 
-  const targetHeading = getParagraphHeadingEnum_(styleName);
-
-  paragraph.setHeading(DocumentApp.ParagraphHeading.NORMAL);
-
-  if (targetHeading !== DocumentApp.ParagraphHeading.NORMAL) {
-    paragraph.setHeading(targetHeading);
-  }
+  applyInheritedNamedStyles_([{
+    paragraph: paragraph,
+    styleName: styleName
+  }]);
 
   return paragraph;
 }
 
 /**
- * Backward-compatible alias used by existing formatting helpers.
+ * Internal base-style helper for Lists, Captions and Notes. Those composite
+ * formatters intentionally add explicit formatting immediately afterwards.
  */
 function applyNamedStyleToParagraph_(paragraph, styleName) {
-  return applyStyleToParagraph_(paragraph, styleName);
+  if (!paragraph) return null;
+  paragraph.setHeading(getParagraphHeadingEnum_(styleName));
+  return paragraph;
 }
 
 function getParagraphHeadingEnum_(styleName) {
@@ -44,6 +45,230 @@ function getParagraphHeadingEnum_(styleName) {
   }
 
   return heading;
+}
+
+const NAMED_STYLE_TEXT_RESET_FIELDS_ = [
+  'bold',
+  'italic',
+  'underline',
+  'strikethrough',
+  'smallCaps',
+  'backgroundColor',
+  'foregroundColor',
+  'fontSize',
+  'weightedFontFamily',
+  'baselineOffset'
+].join(',');
+
+const NAMED_STYLE_PARAGRAPH_RESET_FIELDS_ = [
+  'namedStyleType',
+  'alignment',
+  'lineSpacing',
+  'spacingMode',
+  'spaceAbove',
+  'spaceBelow',
+  'borderBetween',
+  'borderTop',
+  'borderBottom',
+  'borderLeft',
+  'borderRight',
+  'indentFirstLine',
+  'indentStart',
+  'indentEnd',
+  'tabStops',
+  'keepLinesTogether',
+  'keepWithNext',
+  'avoidWidowAndOrphan',
+  'shading',
+  'pageBreakBefore'
+].join(',');
+
+/**
+ * Applies one or more Named Styles in one atomic Docs API batch.
+ * Each assignment is:
+ *   { paragraph: Paragraph|ListItem, styleName: 'NORMAL'|'H1'..'H6' }
+ *
+ * Hyperlinks are not reset, so their destinations remain intact.
+ */
+function applyInheritedNamedStyles_(assignments) {
+  assignments = (assignments || []).filter(x => x && x.paragraph);
+  if (!assignments.length) return 0;
+
+  if (typeof Docs === 'undefined' || !Docs.Documents) {
+    throw new Error(
+      'The Advanced Google Docs service is not enabled. Push appsscript.json, ' +
+      'enable the Google Docs API service and authorize the project again.'
+    );
+  }
+
+  const doc = DocumentApp.getActiveDocument();
+  const body = getActiveBody_();
+  const tabId = getActiveDocumentTabId_();
+  const uniqueByChildIndex = {};
+
+  // Keep only the last requested style for each paragraph.
+  assignments.forEach(assignment => {
+    getParagraphHeadingEnum_(assignment.styleName);
+
+    const paragraph = assignment.paragraph;
+    const top = getTopLevelBodyElement_(paragraph, body);
+
+    if (top !== paragraph) {
+      throw new Error(
+        'Normal/Heading styles can only be applied to paragraphs in the active document body.'
+      );
+    }
+
+    const childIndex = body.getChildIndex(paragraph);
+    uniqueByChildIndex[childIndex] = {
+      childIndex: childIndex,
+      styleName: String(assignment.styleName || '').toUpperCase()
+    };
+  });
+
+  const normalized = Object.keys(uniqueByChildIndex)
+    .map(key => uniqueByChildIndex[key])
+    .sort((a, b) => a.childIndex - b.childIndex);
+
+  // Smart Format can perform DocumentApp changes before this batch.
+  DocumentApp.flush();
+
+  const apiDocument = Docs.Documents.get(doc.getId(), {
+    includeTabsContent: true
+  });
+  const apiDocumentTab = getApiDocumentTab_(apiDocument, tabId);
+  const apiContent = apiDocumentTab && apiDocumentTab.body
+    ? (apiDocumentTab.body.content || [])
+    : [];
+  const apiParagraphs = apiContent.filter(element => element && element.paragraph);
+  const apiParagraphByBodyChild = mapApiParagraphsToBodyChildren_(body, apiParagraphs);
+  const requests = [];
+
+  normalized.forEach(assignment => {
+    const structural = apiParagraphByBodyChild[assignment.childIndex];
+
+    if (
+      !structural ||
+      !Number.isFinite(Number(structural.startIndex)) ||
+      !Number.isFinite(Number(structural.endIndex))
+    ) {
+      throw new Error(
+        'Could not resolve the selected paragraph in the Google Docs API document structure.'
+      );
+    }
+
+    const range = {
+      startIndex: Number(structural.startIndex),
+      endIndex: Number(structural.endIndex)
+    };
+    if (tabId) range.tabId = tabId;
+
+    // The API applies namedStyleType first. Every other field named in this
+    // mask is left unset, so it returns to inheritance from that Named Style.
+    requests.push({
+      updateParagraphStyle: {
+        range: range,
+        paragraphStyle: {
+          namedStyleType: getDocsNamedStyleType_(assignment.styleName)
+        },
+        fields: NAMED_STYLE_PARAGRAPH_RESET_FIELDS_
+      }
+    });
+
+    // Reset visual text properties without removing hyperlink destinations.
+    requests.push({
+      updateTextStyle: {
+        range: range,
+        textStyle: {},
+        fields: NAMED_STYLE_TEXT_RESET_FIELDS_
+      }
+    });
+  });
+
+  const requestBody = {requests: requests};
+  if (apiDocument.revisionId) {
+    requestBody.writeControl = {
+      requiredRevisionId: apiDocument.revisionId
+    };
+  }
+
+  Docs.Documents.batchUpdate(requestBody, doc.getId());
+  return normalized.length;
+}
+
+function getDocsNamedStyleType_(styleName) {
+  const map = {
+    NORMAL: 'NORMAL_TEXT',
+    H1: 'HEADING_1',
+    H2: 'HEADING_2',
+    H3: 'HEADING_3',
+    H4: 'HEADING_4',
+    H5: 'HEADING_5',
+    H6: 'HEADING_6'
+  };
+  const type = map[String(styleName || '').toUpperCase()];
+  if (!type) throw new Error('Unknown style: ' + styleName);
+  return type;
+}
+
+function getActiveDocumentTabId_() {
+  try {
+    const tab = DocumentApp.getActiveDocument().getActiveTab();
+    return tab && tab.getId ? tab.getId() : '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function getApiDocumentTab_(apiDocument, activeTabId) {
+  const found = findApiTabById_(apiDocument.tabs || [], activeTabId);
+  if (found && found.documentTab) return found.documentTab;
+
+  // Compatibility fallback for a legacy/single-tab API response.
+  if (apiDocument.body) return apiDocument;
+
+  throw new Error('Could not read the active Google Docs tab through the Docs API.');
+}
+
+function findApiTabById_(tabs, tabId) {
+  for (let i = 0; i < (tabs || []).length; i++) {
+    const tab = tabs[i];
+    const properties = tab.tabProperties || {};
+
+    if (!tabId || String(properties.tabId || '') === String(tabId)) {
+      return tab;
+    }
+
+    const childMatch = findApiTabById_(tab.childTabs || [], tabId);
+    if (childMatch) return childMatch;
+  }
+
+  return null;
+}
+
+function mapApiParagraphsToBodyChildren_(body, apiParagraphs) {
+  const result = {};
+  let apiIndex = 0;
+
+  for (let i = 0; i < body.getNumChildren(); i++) {
+    const type = body.getChild(i).getType();
+    const isParagraph =
+      type === DocumentApp.ElementType.PARAGRAPH ||
+      type === DocumentApp.ElementType.LIST_ITEM;
+
+    if (!isParagraph) continue;
+
+    const apiParagraph = apiParagraphs[apiIndex++];
+    if (apiParagraph) result[i] = apiParagraph;
+  }
+
+  if (apiIndex !== apiParagraphs.length) {
+    throw new Error(
+      'The Apps Script and Docs API paragraph structures are out of sync. Try the style again.'
+    );
+  }
+
+  return result;
 }
 
 /**
@@ -378,14 +603,16 @@ function segmentMatches_(segment, filter) {
  * C) APPLY STYLE TO SELECTION
  * Arguments: selection + styleName.
  *
- * Uses B to get STYLEABLE_TEXT segments, then A for each element.
+ * Uses B to get STYLEABLE_TEXT segments, then applies all styles in one API
+ * batch so every paragraph inherits from the document's Named Style.
  */
 function applyStyleToSelection_(selection, styleName) {
   const segments = getSegments_(selection, 'STYLEABLE_TEXT');
 
-  segments.forEach(segment => {
-    applyStyleToParagraph_(segment.element, styleName);
-  });
+  applyInheritedNamedStyles_(segments.map(segment => ({
+    paragraph: segment.element,
+    styleName: styleName
+  })));
 
   return segments.length;
 }
@@ -410,7 +637,7 @@ function applyStyleToCurrentContext(styleName) {
     if (cursor) {
       const owner = getOwningParagraph_(cursor.getElement());
 
-      if (owner) {
+      if (owner && getTopLevelBodyElement_(owner, getActiveBody_()) === owner) {
         applyStyleToParagraph_(owner, styleName);
         count = 1;
       }
@@ -2269,6 +2496,7 @@ function smartFormatSelection() {
   let captions = 0;
   let notes = 0;
   let normal = 0;
+  const inheritedStyleAssignments = [];
 
   items.forEach(item => {
     let p = targetById[item.id];
@@ -2278,17 +2506,17 @@ function smartFormatSelection() {
 
     switch (type) {
       case 'heading1':
-        applyNamedStyleToParagraph_(p, 'H1'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H1'}); headings++; break;
       case 'heading2':
-        applyNamedStyleToParagraph_(p, 'H2'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H2'}); headings++; break;
       case 'heading3':
-        applyNamedStyleToParagraph_(p, 'H3'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H3'}); headings++; break;
       case 'heading4':
-        applyNamedStyleToParagraph_(p, 'H4'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H4'}); headings++; break;
       case 'heading5':
-        applyNamedStyleToParagraph_(p, 'H5'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H5'}); headings++; break;
       case 'heading6':
-        applyNamedStyleToParagraph_(p, 'H6'); headings++; break;
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'H6'}); headings++; break;
 
       case 'bullet':
         stripManualListPrefix_(p, 'BULLET');
@@ -2324,7 +2552,7 @@ function smartFormatSelection() {
         } else {
           // If Gemini inferred a caption without an explicit prefix, do not
           // invent whether it is Figure/Table here; keep the content safe.
-          applyNamedStyleToParagraph_(p, 'NORMAL');
+          inheritedStyleAssignments.push({paragraph: p, styleName: 'NORMAL'});
           normal++;
         }
         break;
@@ -2337,13 +2565,15 @@ function smartFormatSelection() {
 
       case 'normal':
       default:
-        applyNamedStyleToParagraph_(p, 'NORMAL');
+        inheritedStyleAssignments.push({paragraph: p, styleName: 'NORMAL'});
         normal++;
         break;
     }
 
     formatted++;
   });
+
+  applyInheritedNamedStyles_(inheritedStyleAssignments);
 
   return {
     ok: true,

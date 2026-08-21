@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.5
+# Docs Assistant v0.9.6
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -22,8 +22,10 @@ Google Docs bound/add-on Apps Script starter project.
 4. "Intelligent formatting" (Gemini classifying headings/tables/normal text and then applying styles) is intentionally left for the next module rather than letting Gemini directly mutate the document.
 
 ## Install
-Create or open an Apps Script project attached to a Google Doc, copy these files, save, reload the document, and use:
+Create or open an Apps Script project attached to a Google Doc, copy these files (including `appsscript.json`), save, authorize the new Docs permission, reload the document, and use:
 Add-ons / Extensions → Docs Assistant → Open Docs Assistant.
+
+The manifest enables the Advanced Google Docs service. With the default Apps Script Cloud project, pushing the manifest enables the API automatically. With a standard Google Cloud project, enable **Google Docs API** once in that Cloud project.
 
 For a published Workspace Add-on, manifest/deployment configuration will need to be adapted to the chosen deployment model.
 
@@ -496,3 +498,15 @@ It is not written into the document or source code.
 - Segment classification now checks H1–H6 BEFORE classifying an element as Bullet/Number/Letter/Roman.
 - Added a direct cursor fallback: if segmentation returns nothing, the owning Paragraph/ListItem under the cursor is formatted directly.
 - No additional style inspection or reconstruction was added.
+
+
+## v0.9.6 — True Named Style inheritance
+- Replaced the ineffective `Normal text -> requested style` sequence used by the Normal/Heading buttons.
+- Normal text and Heading 1–6 now use the Advanced Google Docs service.
+- Direct visual text overrides are reset through `UpdateTextStyleRequest` while hyperlink destinations are preserved.
+- Direct paragraph overrides are reset through `UpdateParagraphStyleRequest` in the same atomic batch.
+- The requested `namedStyleType` is applied without copying or hardcoding font, size, color, spacing, alignment or indentation.
+- Selected paragraphs therefore inherit the current Named Style configured in the active document and continue to follow later Named Style changes.
+- Multi-paragraph selections and Full Smart Format batch their Named Style changes into one Docs API call.
+- Active and nested Google Docs tabs are supported through `tabId`.
+- The manifest now enables the Advanced Docs service and requests the Docs API authorization scope.
