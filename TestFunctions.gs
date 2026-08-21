@@ -68,11 +68,14 @@ function runCurrentTest() {
      * Nueva lista automática.
      * No reutiliza listId y no busca listas anteriores.
      */
-    item.setGlyphType(
-      DocumentApp.GlyphType.LATIN_LOWER
-    );
+ /*
+ * Primero establece el nivel y después el tipo de marcador.
+ */
+item.setNestingLevel(1);
 
-    item.setNestingLevel(0);
+item.setGlyphType(
+  DocumentApp.GlyphType.LATIN_LOWER
+);
 
     // Left 0.25", Hanging 0.25", Right 0".
     item.setIndentFirstLine(18);
