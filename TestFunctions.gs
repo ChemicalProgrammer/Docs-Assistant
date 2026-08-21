@@ -6,7 +6,147 @@ var TEST_NATIVE_LIST_TYPE = 'LETTER';
 
 
 function runCurrentTest() {
-  return testNativeAutomaticList_(TEST_NATIVE_LIST_TYPE);
+  return testApplyNativeIncisoFromPrevious_();
+}
+
+
+/**
+ * Aplica el formato nativo a), b), c) utilizando la definición
+ * de la lista latina nativa anterior más cercana.
+ *
+ * No intenta reiniciar ni decidir si debe continuar.
+ */
+function testApplyNativeIncisoFromPrevious_() {
+  var started = Date.now();
+
+  var targets = getNativeListTestTargets_();
+
+  if (!targets.length) {
+    throw new Error(
+      'Place the cursor in a line or select one or more lines.'
+    );
+  }
+
+  /*
+   * Helper que ya agregamos para convertir Shift+Enter
+   * en líneas independientes.
+   */
+  targets = expandSoftBreakTargetsForNativeTest_(targets);
+
+  if (!targets.length) {
+    throw new Error('No target lines were found.');
+  }
+
+  var parent = targets[0].getParent();
+  var donor = findPreviousNativeInciso_(parent, targets[0]);
+
+  if (!donor) {
+    throw new Error(
+      'No previous native a) list was found in this container.'
+    );
+  }
+
+  var created = [];
+
+  targets.forEach(function(source) {
+    var sourceIndex;
+
+    try {
+      sourceIndex = parent.getChildIndex(source);
+    } catch (error) {
+      throw new Error(
+        'The selected lines must belong to the same document container.'
+      );
+    }
+
+    if (sourceIndex < 0) {
+      throw new Error(
+        'The selected lines must belong to the same document container.'
+      );
+    }
+
+    var content = source.getText();
+    var paragraphAttributes = source.getAttributes();
+    var textAttributes = {};
+
+    if (content.length) {
+      try {
+        textAttributes = source.editAsText().getAttributes();
+      } catch (error) {}
+    }
+
+    var item = parent.insertListItem(
+      sourceIndex,
+      content
+    );
+
+    try {
+      item.setAttributes(paragraphAttributes);
+    } catch (error) {}
+
+    if (content.length) {
+      try {
+        item.editAsText().setAttributes(textAttributes);
+      } catch (error) {}
+    }
+
+    /*
+     * Esta es la operación que ya había funcionado:
+     * copiar la definición nativa que muestra a).
+     */
+    item.setListId(donor);
+    item.setNestingLevel(donor.getNestingLevel());
+
+    // Left 0.25", Hanging 0.25", Right 0".
+    item.setIndentFirstLine(18);
+    item.setIndentStart(36);
+    item.setIndentEnd(0);
+
+    created.push(item);
+    source.removeFromParent();
+  });
+
+  return {
+    testId: 'TEST-NATIVE-INCISO-PROVEN-METHOD',
+    itemsApplied: created.length,
+    glyphType: String(created[0].getGlyphType()),
+    listId: created[0].getListId(),
+    nestingLevel: created[0].getNestingLevel(),
+    elapsedMs: Date.now() - started,
+    ok: true
+  };
+}
+
+
+/**
+ * Busca hacia arriba el inciso latino automático más cercano.
+ */
+function findPreviousNativeInciso_(parent, target) {
+  var targetIndex = parent.getChildIndex(target);
+
+  for (var i = targetIndex - 1; i >= 0; i--) {
+    var child = parent.getChild(i);
+
+    if (
+      child.getType() !==
+      DocumentApp.ElementType.LIST_ITEM
+    ) {
+      continue;
+    }
+
+    var item = child.asListItem();
+
+    try {
+      if (
+        item.getGlyphType() ===
+        DocumentApp.GlyphType.LATIN_LOWER
+      ) {
+        return item;
+      }
+    } catch (error) {}
+  }
+
+  return null;
 }
 
 
