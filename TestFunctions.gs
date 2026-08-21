@@ -4,7 +4,148 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testForceHeading4Transition_();
+  return testConfirmMinimalH4Reset_();
+}
+
+/**
+ * TEST-009
+ *
+ * Confirma si basta con:
+ *
+ * borrar overrides con null → aplicar H4
+ *
+ * No utiliza una transición temporal por NORMAL.
+ */
+function testConfirmMinimalH4Reset_() {
+  const started = Date.now();
+
+  const document = DocumentApp.getActiveDocument();
+  const cursor = document.getCursor();
+
+  if (!cursor) {
+    throw new Error(
+      'Coloca el cursor dentro de un H4 con formato incorrecto.'
+    );
+  }
+
+  const paragraph = testFindParagraph_(
+    cursor.getElement()
+  );
+
+  if (!paragraph) {
+    throw new Error('No se pudo localizar el párrafo.');
+  }
+
+  const before = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine: paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  /*
+   * No incluimos LINK_URL para conservar hipervínculos.
+   * No incluimos HEADING porque se aplicará después.
+   */
+  const resetAttributes = {};
+
+  resetAttributes[
+    DocumentApp.Attribute.FONT_FAMILY
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.FONT_SIZE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.FOREGROUND_COLOR
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.BACKGROUND_COLOR
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.BOLD
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.ITALIC
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.UNDERLINE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.STRIKETHROUGH
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.HORIZONTAL_ALIGNMENT
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_START
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_END
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.INDENT_FIRST_LINE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.LINE_SPACING
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.SPACING_BEFORE
+  ] = null;
+
+  resetAttributes[
+    DocumentApp.Attribute.SPACING_AFTER
+  ] = null;
+
+  const updateStarted = Date.now();
+
+  /*
+   * Solución mínima:
+   * limpiar overrides y aplicar el estilo.
+   */
+  paragraph.setAttributes(resetAttributes);
+
+  paragraph.setHeading(
+    DocumentApp.ParagraphHeading.HEADING4
+  );
+
+  const updateMs = Date.now() - updateStarted;
+
+  const after = {
+    elementType: String(paragraph.getType()),
+    heading: String(paragraph.getHeading()),
+    indentStart: paragraph.getIndentStart(),
+    indentEnd: paragraph.getIndentEnd(),
+    indentFirstLine: paragraph.getIndentFirstLine(),
+    alignment: String(paragraph.getAlignment())
+  };
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId: 'TEST-009-MINIMAL-H4-RESET',
+    before: before,
+    after: after,
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
 }
 
 /**
