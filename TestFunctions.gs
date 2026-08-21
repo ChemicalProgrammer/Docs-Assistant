@@ -4,7 +4,331 @@
  * Para cada experimento cambiaremos únicamente la prueba ejecutada aquí.
  */
 function runCurrentTest() {
-  return testCreateNewNativeLetterList_();
+  return testApplyExactLetterList_();
+}
+
+/**
+ * TEST-013
+ *
+ * Convierte párrafos y saltos manuales en incisos:
+ *
+ * a) Julio
+ * b) Agosto
+ * c) Septiembre
+ *
+ * Esta prueba inicia siempre desde a).
+ */
+function testApplyExactLetterList_() {
+  const started = Date.now();
+
+  const document =
+    DocumentApp.getActiveDocument();
+
+  const context =
+    testGetParagraphsFromCurrentContext_(
+      document
+    );
+
+  const targets = context.paragraphs;
+
+  if (!targets.length) {
+    throw new Error(
+      'Selecciona uno o más párrafos o coloca el cursor en uno.'
+    );
+  }
+
+  const updateStarted = Date.now();
+
+  const result =
+    testCreateExactManualList_(
+      targets,
+      'LETTER',
+      1
+    );
+
+  const updateMs =
+    Date.now() - updateStarted;
+
+  document.saveAndClose();
+
+  return {
+    ok: true,
+    testId:
+      'TEST-013-EXACT-MANUAL-LETTER-LIST',
+
+    contextType: context.contextType,
+    sourceElements: targets.length,
+    paragraphsCreated:
+      result.paragraphs.length,
+
+    firstOrdinal: 1,
+    nextOrdinal: result.nextOrdinal,
+
+    expectedPrefix: 'a)',
+    expectedIndentInches: {
+      left: 0.25,
+      hanging: 0.25,
+      right: 0
+    },
+
+    items: result.paragraphs.map(
+      function (paragraph, index) {
+        return {
+          index: index,
+          text: paragraph.getText(),
+          heading: String(
+            paragraph.getHeading()
+          ),
+          indentStart:
+            paragraph.getIndentStart(),
+          indentFirstLine:
+            paragraph.getIndentFirstLine(),
+          indentEnd:
+            paragraph.getIndentEnd()
+        };
+      }
+    ),
+
+    updateMs: updateMs,
+    apiReadMs: 0,
+    apiWriteMs: 0,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Convierte los elementos recibidos en párrafos separados,
+ * aplicando un prefijo visible controlado por el add-on.
+ */
+function testCreateExactManualList_(
+  targets,
+  type,
+  initialOrdinal
+) {
+  let ordinal = initialOrdinal;
+  const createdParagraphs = [];
+
+  targets.forEach(function (target) {
+    const parent = target.getParent();
+    const targetIndex =
+      parent.getChildIndex(target);
+
+    /*
+     * Google Docs representa los saltos manuales
+     * internos mediante \r.
+     */
+    const logicalLines = String(
+      target.getText() || ''
+    )
+      .split(/\r\n|\r|\n/)
+      .map(function (line) {
+        return testStripExistingListPrefix_(
+          line
+        ).trim();
+      })
+      .filter(function (line) {
+        return line.length > 0;
+      });
+
+    /*
+     * Insertar un párrafo independiente por cada línea.
+     */
+    logicalLines.forEach(function (
+      content,
+      lineIndex
+    ) {
+      const prefix =
+        testCreateListPrefix_(
+          type,
+          ordinal
+        );
+
+      const paragraph =
+        parent.insertParagraph(
+          targetIndex + lineIndex,
+          prefix + ' ' + content
+        );
+
+      /*
+       * Aplicar el Normal Style actual del documento.
+       */
+      applyStyleToParagraph_(
+        paragraph,
+        'NORMAL'
+      );
+
+      testApplyExactListIndents_(
+        paragraph
+      );
+
+      createdParagraphs.push(paragraph);
+      ordinal++;
+    });
+
+    /*
+     * Si había contenido, sustituir el elemento original.
+     */
+    if (logicalLines.length) {
+      target.removeFromParent();
+    } else {
+      /*
+       * Un párrafo vacío no se convierte en elemento de lista.
+       */
+      applyStyleToParagraph_(
+        target,
+        'NORMAL'
+      );
+    }
+  });
+
+  return {
+    paragraphs: createdParagraphs,
+    nextOrdinal: ordinal
+  };
+}
+
+/**
+ * Genera el prefijo requerido.
+ */
+function testCreateListPrefix_(
+  type,
+  ordinal
+) {
+  if (type === 'NUMBER') {
+    return String(ordinal) + '.';
+  }
+
+  if (type === 'LETTER') {
+    return (
+      testNumberToLetters_(ordinal) +
+      ')'
+    );
+  }
+
+  if (type === 'ROMAN') {
+    return (
+      testNumberToRoman_(ordinal)
+        .toLowerCase() +
+      '.'
+    );
+  }
+
+  throw new Error(
+    'Unsupported manual list type: ' +
+    type
+  );
+}
+
+/**
+ * Left: 0.25"
+ * Hanging: 0.25"
+ * Right: 0"
+ */
+function testApplyExactListIndents_(
+  paragraph
+) {
+  const pointsPerInch = 72;
+  const left = 0.25;
+  const hanging = 0.25;
+
+  paragraph.setIndentFirstLine(
+    left * pointsPerInch
+  );
+
+  paragraph.setIndentStart(
+    (left + hanging) *
+      pointsPerInch
+  );
+
+  paragraph.setIndentEnd(0);
+}
+
+/**
+ * Elimina un prefijo previo antes de crear el nuevo.
+ */
+function testStripExistingListPrefix_(
+  value
+) {
+  let text = String(value || '');
+
+  text = text.replace(
+    /^\s*[•●○▪◦‣⁃-]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*\d+[.)]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*[A-Za-z]+[.)]\s+/,
+    ''
+  );
+
+  text = text.replace(
+    /^\s*[ivxlcdm]+[.)]\s+/i,
+    ''
+  );
+
+  return text;
+}
+
+function testNumberToLetters_(number) {
+  let value = Math.max(
+    1,
+    Number(number) || 1
+  );
+
+  let result = '';
+
+  while (value > 0) {
+    value--;
+
+    result =
+      String.fromCharCode(
+        97 + (value % 26)
+      ) +
+      result;
+
+    value = Math.floor(value / 26);
+  }
+
+  return result;
+}
+
+function testNumberToRoman_(number) {
+  let value = Math.max(
+    1,
+    Number(number) || 1
+  );
+
+  const values = [
+    [1000, 'M'],
+    [900, 'CM'],
+    [500, 'D'],
+    [400, 'CD'],
+    [100, 'C'],
+    [90, 'XC'],
+    [50, 'L'],
+    [40, 'XL'],
+    [10, 'X'],
+    [9, 'IX'],
+    [5, 'V'],
+    [4, 'IV'],
+    [1, 'I']
+  ];
+
+  let result = '';
+
+  values.forEach(function (pair) {
+    while (value >= pair[0]) {
+      result += pair[1];
+      value -= pair[0];
+    }
+  });
+
+  return result;
 }
 
 /**
