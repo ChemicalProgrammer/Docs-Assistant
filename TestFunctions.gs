@@ -1,161 +1,221 @@
 /**
  * TEST LAB
  *
- * Comprueba que las tablas auxiliares utilizadas
- * para presentar ecuaciones no se cuenten como
- * tablas reales.
+ * Prueba completa:
+ * 1. Proporciona temporalmente el selector que falta.
+ * 2. Ejecuta formatEquationLine().
+ * 3. Comprueba la tabla auxiliar recién creada.
  *
- * Esta prueba:
- * - No modifica el documento.
- * - No utiliza la API avanzada de Google Docs.
+ * No utiliza la API avanzada.
+ */
+
+
+/**
+ * Devuelve los párrafos afectados por el cursor
+ * o por la selección.
+ *
+ * Esta función falta actualmente en Formatting.gs.
+ */
+function getStyleTargetParagraphs_() {
+  const doc =
+    DocumentApp.getActiveDocument();
+
+  const selection =
+    doc.getSelection();
+
+  if (selection) {
+    return getSelectedParagraphs_();
+  }
+
+  const cursor =
+    doc.getCursor();
+
+  if (!cursor) {
+    return [];
+  }
+
+  const paragraph =
+    getOwningParagraph_(
+      cursor.getElement()
+    );
+
+  return paragraph
+    ? [paragraph]
+    : [];
+}
+
+
+/**
+ * Devuelve exclusivamente el párrafo
+ * donde está colocado el cursor.
+ *
+ * También falta actualmente en Formatting.gs
+ * y es utilizado por Indentation.
+ */
+function getCurrentParagraph_() {
+  const cursor =
+    DocumentApp
+      .getActiveDocument()
+      .getCursor();
+
+  if (!cursor) {
+    return null;
+  }
+
+  return getOwningParagraph_(
+    cursor.getElement()
+  );
+}
+
+
+/**
+ * Ejecuta la función real de Equation y comprueba
+ * la tabla auxiliar creada.
+ *
+ * Debes colocar el cursor en una línea real
+ * que quieras convertir en ecuación.
  */
 function runCurrentTest() {
   const started = Date.now();
 
-  const body = getActiveBody_();
-  const targetTable = getActiveTable_();
+  const body =
+    getActiveBody_();
 
-  if (!targetTable) {
+  const targets =
+    getStyleTargetParagraphs_();
+
+  if (targets.length !== 1) {
     throw new Error(
-      'Place the cursor inside the table you want to test.'
+      'Place the cursor in one equation line or select only that line.'
     );
   }
+
+  const source =
+    targets[0];
+
+  const top =
+    getTopLevelBodyElement_(
+      source,
+      body
+    );
+
+  if (
+    !top ||
+    top.getType() !==
+      DocumentApp.ElementType.PARAGRAPH
+  ) {
+    throw new Error(
+      'The equation line must be a body-level normal paragraph.'
+    );
+  }
+
+  const sourceIndex =
+    body.getChildIndex(top);
+
+  const tablesBefore =
+    testCountBodyTables_(body);
 
   /*
-   * La numeración de captions trabaja únicamente
-   * con tablas de nivel principal en el Body.
+   * Ejecuta la función real de producción.
    */
-  let targetIndex;
+  const formatterResult =
+    formatEquationLine();
 
-  try {
-    targetIndex = body.getChildIndex(targetTable);
-  } catch (error) {
-    throw new Error(
-      'The selected table must be a body-level table.'
-    );
-  }
+  /*
+   * formatEquationLine() inserta la tabla
+   * en la posición del párrafo original.
+   */
+  const createdElement =
+    body.getChild(sourceIndex);
 
-  let physicalTables = 0;
-  let equationLayoutTables = 0;
-  let countableTables = 0;
+  const createdIsTable =
+    createdElement.getType() ===
+      DocumentApp.ElementType.TABLE;
 
-  let rawOrdinalAtTarget = 0;
-  let correctedOrdinalAtTarget = 0;
+  const createdTable =
+    createdIsTable
+      ? createdElement.asTable()
+      : null;
 
-  const tables = [];
+  const detectedAsEquationLayout =
+    createdTable
+      ? testIsEquationLayoutTable_(
+          createdTable
+        )
+      : false;
 
-  for (
-    let childIndex = 0;
-    childIndex < body.getNumChildren();
-    childIndex++
-  ) {
-    const child = body.getChild(childIndex);
-
-    if (
-      child.getType() !==
-      DocumentApp.ElementType.TABLE
-    ) {
-      continue;
-    }
-
-    const table = child.asTable();
-
-    physicalTables++;
-
-    const isEquationLayout =
-      testIsEquationLayoutTable_(table);
-
-    if (isEquationLayout) {
-      equationLayoutTables++;
-    } else {
-      countableTables++;
-    }
-
-    /*
-     * Calcula ambos ordinales hasta la tabla
-     * donde está colocado el cursor.
-     */
-    if (childIndex <= targetIndex) {
-      rawOrdinalAtTarget++;
-
-      if (!isEquationLayout) {
-        correctedOrdinalAtTarget++;
-      }
-    }
-
-    tables.push(
-      testDescribeTable_(
-        table,
-        childIndex,
-        physicalTables,
-        isEquationLayout
-      )
-    );
-  }
-
-  const targetIsEquationLayout =
-    testIsEquationLayoutTable_(targetTable);
+  const tablesAfter =
+    testCountBodyTables_(body);
 
   return {
-    ok: true,
-    testId: 'CAPTION-GHOST-TABLE-DETECTION',
-    message: targetIsEquationLayout
-      ? 'The selected table was identified as an equation layout table.'
-      : (
-          'Raw table ordinal: ' +
-          rawOrdinalAtTarget +
-          '. Corrected ordinal: ' +
-          correctedOrdinalAtTarget +
-          '.'
-        ),
-    usesAdvancedDocsApi: false,
-    modifiesDocument: false,
+    ok:
+      createdIsTable &&
+      detectedAsEquationLayout,
 
-    totals: {
-      physicalTables: physicalTables,
-      equationLayoutTablesIgnored:
-        equationLayoutTables,
-      countableTables: countableTables
-    },
+    testId:
+      'EQUATION-CREATION-AND-DETECTION',
 
-    selectedTable: {
-      bodyChildIndex: targetIndex,
-      isEquationLayout:
-        targetIsEquationLayout,
-      rawOrdinal:
-        rawOrdinalAtTarget,
-      correctedOrdinal:
-        targetIsEquationLayout
-          ? null
-          : correctedOrdinalAtTarget
-    },
+    equationNumber:
+      formatterResult.equationNumber,
 
-    tables: tables,
-    elapsedMs: Date.now() - started
+    createdAtBodyChildIndex:
+      sourceIndex,
+
+    createdIsTable:
+      createdIsTable,
+
+    createdRows:
+      createdTable
+        ? createdTable.getNumRows()
+        : null,
+
+    createdFirstRowCells:
+      createdTable
+        ? createdTable
+            .getRow(0)
+            .getNumCells()
+        : null,
+
+    equationLayoutDetected:
+      detectedAsEquationLayout,
+
+    wouldBeCountedAsCaptionTable:
+      createdIsTable &&
+      !detectedAsEquationLayout,
+
+    physicalTablesBefore:
+      tablesBefore,
+
+    physicalTablesAfter:
+      tablesAfter,
+
+    physicalTableDelta:
+      tablesAfter - tablesBefore,
+
+    usesAdvancedDocsApi:
+      false,
+
+    elapsedMs:
+      Date.now() - started
   };
 }
 
 
 /**
- * Detecta exclusivamente la estructura creada por
+ * Detecta la estructura exacta que genera
  * formatEquationLine().
- *
- * Estructura esperada:
- * - Una fila.
- * - Tres celdas.
- * - Primera celda vacía.
- * - Tercera celda con puntos y "Equation N".
- *
- * No depende del ancho del borde porque una tabla
- * auxiliar podría haber sido formateada accidentalmente.
  */
 function testIsEquationLayoutTable_(table) {
   try {
-    if (!table || table.getNumRows() !== 1) {
+    if (
+      !table ||
+      table.getNumRows() !== 1
+    ) {
       return false;
     }
 
-    const row = table.getRow(0);
+    const row =
+      table.getRow(0);
 
     if (row.getNumCells() !== 3) {
       return false;
@@ -171,18 +231,10 @@ function testIsEquationLayoutTable_(table) {
         row.getCell(2).getText()
       );
 
-    /*
-     * formatEquationLine() genera:
-     *
-     * .................... Equation 1
-     */
-    const hasEquationLabel =
-      /^\.{10,}\s*Equation\s+\d+\s*$/i
-        .test(rightText);
-
     return (
       leftText === '' &&
-      hasEquationLabel
+      /^\.{10,}\s*Equation\s+\d+\s*$/i
+        .test(rightText)
     );
   } catch (error) {
     return false;
@@ -191,70 +243,26 @@ function testIsEquationLayoutTable_(table) {
 
 
 /**
- * Indica si una tabla debe participar
- * en la numeración de Table captions.
+ * Cuenta solamente las tablas físicas de
+ * nivel principal, sin inspeccionar su contenido.
  */
-function testIsCountableCaptionTable_(element) {
-  if (
-    !element ||
-    element.getType() !==
-      DocumentApp.ElementType.TABLE
+function testCountBodyTables_(body) {
+  let count = 0;
+
+  for (
+    let index = 0;
+    index < body.getNumChildren();
+    index++
   ) {
-    return false;
+    if (
+      body.getChild(index).getType() ===
+      DocumentApp.ElementType.TABLE
+    ) {
+      count++;
+    }
   }
 
-  return !testIsEquationLayoutTable_(
-    element.asTable()
-  );
-}
-
-
-/**
- * Genera información diagnóstica de una tabla.
- */
-function testDescribeTable_(
-  table,
-  bodyChildIndex,
-  physicalOrdinal,
-  isEquationLayout
-) {
-  let firstRowCells = 0;
-  let borderWidth = null;
-  let rightCellPreview = '';
-
-  try {
-    if (table.getNumRows() > 0) {
-      const firstRow = table.getRow(0);
-
-      firstRowCells =
-        firstRow.getNumCells();
-
-      if (firstRowCells >= 3) {
-        rightCellPreview =
-          testNormalizeTableText_(
-            firstRow
-              .getCell(2)
-              .getText()
-          ).substring(0, 80);
-      }
-    }
-  } catch (error) {}
-
-  try {
-    borderWidth =
-      table.getBorderWidth();
-  } catch (error) {}
-
-  return {
-    physicalOrdinal: physicalOrdinal,
-    bodyChildIndex: bodyChildIndex,
-    rows: table.getNumRows(),
-    firstRowCells: firstRowCells,
-    borderWidth: borderWidth,
-    equationLayout: isEquationLayout,
-    countedAsTable: !isEquationLayout,
-    rightCellPreview: rightCellPreview
-  };
+  return count;
 }
 
 
