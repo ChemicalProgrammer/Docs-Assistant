@@ -257,17 +257,9 @@ function classifyParagraphSubtype_(paragraph) {
 
   if (!trimmed) return 'BLANK';
 
-  if (paragraph.getType() === DocumentApp.ElementType.LIST_ITEM) {
-    return classifyListItem_(paragraph.asListItem());
-  }
-
-  if (paragraphContainsFigure_(paragraph)) return 'FIGURE';
-  if (paragraphContainsEquation_(paragraph)) return 'EQUATION';
-
-  if (/^\s*figure\b/i.test(trimmed)) return 'FIGURE_CAPTION';
-  if (/^\s*table\b/i.test(trimmed)) return 'TABLE_CAPTION';
-  if (/^\s*(?:notes?|notas?)\b/i.test(trimmed)) return 'NOTE';
-
+  // IMPORTANT:
+  // A numbered Heading in Google Docs is usually a ListItem AND a Heading.
+  // Heading identity must therefore be checked before list identity.
   try {
     const heading = paragraph.getHeading();
 
@@ -278,6 +270,17 @@ function classifyParagraphSubtype_(paragraph) {
     if (heading === DocumentApp.ParagraphHeading.HEADING5) return 'H5';
     if (heading === DocumentApp.ParagraphHeading.HEADING6) return 'H6';
   } catch (e) {}
+
+  if (paragraphContainsFigure_(paragraph)) return 'FIGURE';
+  if (paragraphContainsEquation_(paragraph)) return 'EQUATION';
+
+  if (/^\s*figure\b/i.test(trimmed)) return 'FIGURE_CAPTION';
+  if (/^\s*table\b/i.test(trimmed)) return 'TABLE_CAPTION';
+  if (/^\s*(?:notes?|notas?)\b/i.test(trimmed)) return 'NOTE';
+
+  if (paragraph.getType() === DocumentApp.ElementType.LIST_ITEM) {
+    return classifyListItem_(paragraph.asListItem());
+  }
 
   return 'NORMAL_PARAGRAPH';
 }
@@ -395,10 +398,27 @@ function applyStyleToCurrentContext(styleName) {
   const doc = DocumentApp.getActiveDocument();
   const selection = doc.getSelection();
 
-  const count = applyStyleToSelection_(selection, styleName);
+  let count = applyStyleToSelection_(selection, styleName);
+
+  // Robust cursor fallback:
+  // A numbered heading can be represented by Docs as a ListItem. If generic
+  // segmentation yields nothing, format the paragraph/list item that actually
+  // owns the cursor rather than failing.
+  if (!count && !selection) {
+    const cursor = doc.getCursor();
+
+    if (cursor) {
+      const owner = getOwningParagraph_(cursor.getElement());
+
+      if (owner) {
+        applyStyleToParagraph_(owner, styleName);
+        count = 1;
+      }
+    }
+  }
 
   if (!count) {
-    throw new Error('No styleable paragraph was found at the cursor/selection.');
+    throw new Error('No paragraph or heading was found at the cursor/selection.');
   }
 
   return {

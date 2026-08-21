@@ -1,4 +1,4 @@
-# Docs Assistant v0.9.4
+# Docs Assistant v0.9.5
 
 Google Docs bound/add-on Apps Script starter project.
 
@@ -488,3 +488,11 @@ It is not written into the document or source code.
   `getActiveTab().asDocumentTab().getBody()`, with a legacy `doc.getBody()`
   fallback.
 - No changes were made to the A/B/C style architecture.
+
+
+## v0.9.5 — Numbered heading classification fix
+- Fixed `No styleable paragraph was found at the cursor/selection`.
+- Google Docs numbered headings are commonly `ListItem` objects that also have a Heading style.
+- Segment classification now checks H1–H6 BEFORE classifying an element as Bullet/Number/Letter/Roman.
+- Added a direct cursor fallback: if segmentation returns nothing, the owning Paragraph/ListItem under the cursor is formatted directly.
+- No additional style inspection or reconstruction was added.
