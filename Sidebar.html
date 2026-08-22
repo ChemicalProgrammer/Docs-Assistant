@@ -17,40 +17,17 @@
   <div class="tabs">
     <button id="tabFormat" class="tab active" onclick="showTab('format')">✎ Formatting</button>
     <button id="tabGemini" class="tab" onclick="showTab('gemini')">✦ Gemini</button>
+    <button id="tabTest" class="tab" onclick="showTab('test')">🧪 Tests</button>
   </div>
 
   <main>
     <section id="formatPanel">
       <div class="context" id="selectionContext">Checking selection…</div>
-      <div class="group">
-        <label>TEST LAB</label>
-
-        <button
-          id="testRunButton"
-          class="wide btn-technical"
-          onclick="runCurrentTestUi(event)">
-          🧪 Run current test
-        </button>
-
-        <div class="smartHint">
-          Runs the isolated function currently configured in TestFunctions.gs.
-        </div>
-
-        <textarea
-          id="testOutput"
-          class="result"
-          readonly>No test has been run.</textarea>
-      </div>
-      <div class="group smartFormatGroup">
-        <label>SMART FORMAT</label>
-        <button class="wide btn-fullformat" onclick="fullSmartFormat(event)">✦ Format complete selection</button>
-        <div class="smartHint">Uses local rules for obvious structure and Gemini only for ambiguous paragraphs. Applies Normal text, headings, lists, captions and notes. Actual table objects are skipped.</div>
-      </div>
-<div class="group">
+<div class="group smartFormatGroup">
   <label>QUICK SELECTION FORMAT</label>
 
   <button
-    class="wide btn-style"
+    class="wide btn-fullformat"
     onclick="formatSelectedStyles(event)"
   >
     ✦ Format selected styles
@@ -190,12 +167,8 @@
 
       <div class="group">
         <label>BREAKS</label>
-        <select id="breakKind">
-          <option value="PAGE">Page break</option>
-          <option value="SECTION_NEXT">Section break — next page</option>
-          <option value="SECTION_CONTINUOUS">Section break — continuous</option>
-        </select>
-        <button class="wide btn-break" onclick="addBreak(event)">Insert break</button>
+        <button class="wide btn-break" onclick="addBreak(event)">Insert page break</button>
+        <div class="smartHint">With a selection, inserts one page break immediately before the selected block. With a cursor, inserts it at the cursor.</div>
       </div>
     </section>
 
@@ -232,6 +205,30 @@
           <button id="replaceBtn" class="btn-apply" onclick="applyResult('REPLACE',event)">Replace selection</button>
           <button onclick="applyResult('INSERT',event)">Insert at cursor</button>
         </div>
+      </div>
+    </section>
+
+    <section id="testPanel" class="hidden">
+      <div class="context" id="testContext">Select content in the document to run the current test.</div>
+
+      <div class="group">
+        <label>TEST LAB</label>
+
+        <button
+          id="testRunButton"
+          class="wide btn-technical"
+          onclick="runCurrentTestUi(event)">
+          🧪 Run current test
+        </button>
+
+        <div class="smartHint">
+          Runs the isolated function currently configured in TestFunctions.gs.
+        </div>
+
+        <textarea
+          id="testOutput"
+          class="result"
+          readonly>No test has been run.</textarea>
       </div>
     </section>
 

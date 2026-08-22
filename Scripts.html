@@ -5,8 +5,10 @@ function showTab(name){
  if(taskRunning)return;
  document.getElementById('formatPanel').classList.toggle('hidden',name!=='format');
  document.getElementById('geminiPanel').classList.toggle('hidden',name!=='gemini');
+ document.getElementById('testPanel').classList.toggle('hidden',name!=='test');
  document.getElementById('tabFormat').classList.toggle('active',name==='format');
  document.getElementById('tabGemini').classList.toggle('active',name==='gemini');
+ document.getElementById('tabTest').classList.toggle('active',name==='test');
  refreshContext();
 }
 function status(m){document.getElementById('status').textContent=m||''}
@@ -54,10 +56,29 @@ function runServer(btn,label,fn,args=[],success='Done'){
  let r=google.script.run.withSuccessHandler(()=>endTask(true,success)).withFailureHandler(fail);
  r[fn](...args);
 }
+function runParagraphServer(btn,fn,args,success){
+ if(!beginTask(btn,'Applying…'))return;
+ let r=google.script.run
+   .withSuccessHandler(result=>{
+     result=result||{};
+     const count=Number(result.paragraphs||0);
+     const elapsed=Number(result.elapsedMs||0);
+     endTask(
+       true,
+       success+
+       (count?` · ${count} paragraph${count===1?'':'s'}`:'')+
+       (elapsed?` · server ${elapsed} ms`:'')
+     );
+   })
+   .withFailureHandler(fail);
+ r[fn](...args);
+}
 function refreshContext(){
  google.script.run.withSuccessHandler(c=>{
   ctx=c;const msg=c.hasSelection?`Selected content · ${c.wordCount} words`:(c.hasCursor?'Insertion point · ready':'Click in the document to establish context');
-  document.getElementById('selectionContext').textContent=msg;document.getElementById('geminiContext').textContent=msg;
+  document.getElementById('selectionContext').textContent=msg;
+  document.getElementById('geminiContext').textContent=msg;
+  document.getElementById('testContext').textContent=msg;
   if(!taskRunning)document.getElementById('replaceBtn').disabled=!c.hasSelection;
  }).getDocumentContext();
 
@@ -79,23 +100,6 @@ function refreshCaptionNumberingSettings(){
    if(tState)tState.textContent=table.anchorSet?`Anchor set · ${table.startAt||1}`:`Document start · ${table.startAt||1}`;
    if(fState)fState.textContent=figure.anchorSet?`Anchor set · ${figure.startAt||1}`:`Document start · ${figure.startAt||1}`;
  }).getCaptionNumberingSettings();
-}
-function fullSmartFormat(e){
- if(!beginTask(e.currentTarget,'Analyzing…'))return;
- google.script.run
-   .withSuccessHandler(r=>{
-     const parts=[];
-     if(r){
-       if(r.headings) parts.push(`${r.headings} headings`);
-       if(r.lists) parts.push(`${r.lists} lists`);
-       if(r.captions) parts.push(`${r.captions} captions`);
-       if(r.notes) parts.push(`${r.notes} notes`);
-       if(r.skippedTableParagraphs) parts.push(`${r.skippedTableParagraphs} table-cell paragraphs skipped`);
-     }
-     endTask(true,parts.length ? `Complete format · ${parts.join(' · ')}` : 'Complete format applied');
-   })
-   .withFailureHandler(fail)
-   .smartFormatSelection();
 }
 function styleText(s,e){
  if(!beginTask(e.currentTarget,'…'))return;
@@ -290,8 +294,8 @@ function formatSelectedStyles(e) {
     .withFailureHandler(fail)
     .formatSelectedNamedStyles();
 }
-function spacing(b,a,l,e){runServer(e.currentTarget,'…','setParagraphSpacing',[b,a,l],'Spacing applied')}
-function keepNext(e){runServer(e.currentTarget,'…','setKeepWithNext',[true],'Keep with next applied')}
+function spacing(b,a,l,e){runParagraphServer(e.currentTarget,'setParagraphSpacing',[b,a,l],'Spacing applied')}
+function keepNext(e){runParagraphServer(e.currentTarget,'setKeepWithNext',[true],'Keep with next applied')}
 function list(t,e){runServer(e.currentTarget,'…','applyListPreset',[t],'List applied')}
 function formatNote(e){
  runServer(e.currentTarget,'…','formatNoteLine',[],'Note formatted');
@@ -349,7 +353,7 @@ function formatEquation(e){
    .withFailureHandler(fail)
    .formatEquationLine();
 }
-function addBreak(e){runServer(e.currentTarget,'Inserting…','insertBreak',[document.getElementById('breakKind').value],'Break inserted')}
+function addBreak(e){runServer(e.currentTarget,'Inserting…','insertBreak',['PAGE'],'Page break inserted')}
 function smartApply(e){
  const text=document.getElementById('rawText').value.trim();
  if(!text){status('Paste content first.');return;}

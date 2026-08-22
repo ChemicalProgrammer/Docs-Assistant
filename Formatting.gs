@@ -627,7 +627,8 @@ function sentenceCaseHeading_(value) {
 }
 
 function getCurrentIndentation() {
-  const target = getCurrentParagraph_() || getFirstSelectedParagraph_();
+  const targets = getStyleTargetParagraphs_();
+  const target = targets.length ? targets[0] : null;
 
   if (!target) {
     throw new Error('Place the cursor in a paragraph or select text first.');
@@ -658,6 +659,7 @@ function getCurrentIndentation() {
 }
 
 function applyIndentation(left, right, special, by) {
+  const started = Date.now();
   const paragraphs = getStyleTargetParagraphs_();
 
   if (!paragraphs.length) {
@@ -685,25 +687,26 @@ function applyIndentation(left, right, special, by) {
   const leftPt = leftIn * PT_PER_IN;
   const rightPt = rightIn * PT_PER_IN;
   const byPt = byIn * PT_PER_IN;
+  const attribute = DocumentApp.Attribute;
+  const attributes = {};
+
+  if (mode === 'HANGING') {
+    // First line starts at Left; wrapped lines at Left + Hanging.
+    attributes[attribute.INDENT_FIRST_LINE] = leftPt;
+    attributes[attribute.INDENT_START] = leftPt + byPt;
+  } else if (mode === 'FIRST_LINE') {
+    // Wrapped lines start at Left; first line starts at Left + By.
+    attributes[attribute.INDENT_START] = leftPt;
+    attributes[attribute.INDENT_FIRST_LINE] = leftPt + byPt;
+  } else {
+    attributes[attribute.INDENT_START] = leftPt;
+    attributes[attribute.INDENT_FIRST_LINE] = leftPt;
+  }
+
+  attributes[attribute.INDENT_END] = rightPt;
 
   paragraphs.forEach(p => {
-    if (mode === 'HANGING') {
-      // Google Docs geometry:
-      // first line starts at Left;
-      // wrapped lines start at Left + Hanging.
-      p.setIndentFirstLine(leftPt);
-      p.setIndentStart(leftPt + byPt);
-    } else if (mode === 'FIRST_LINE') {
-      // Wrapped lines start at Left;
-      // first line starts at Left + By.
-      p.setIndentStart(leftPt);
-      p.setIndentFirstLine(leftPt + byPt);
-    } else {
-      p.setIndentStart(leftPt);
-      p.setIndentFirstLine(leftPt);
-    }
-
-    p.setIndentEnd(rightPt);
+    p.setAttributes(attributes);
   });
 
   return {
@@ -712,28 +715,9 @@ function applyIndentation(left, right, special, by) {
     left: leftIn,
     right: rightIn,
     special: mode,
-    by: byIn
+    by: byIn,
+    elapsedMs: Date.now() - started
   };
-}
-
-function getFirstSelectedParagraph_() {
-  const selection = DocumentApp.getActiveDocument().getSelection();
-  if (!selection) return null;
-
-  const ranges = selection.getRangeElements();
-  if (!ranges.length) return null;
-
-  let el = ranges[0].getElement();
-
-  while (
-    el &&
-    el.getType() !== DocumentApp.ElementType.PARAGRAPH &&
-    el.getType() !== DocumentApp.ElementType.LIST_ITEM
-  ) {
-    el = el.getParent();
-  }
-
-  return el || null;
 }
 
 function roundIndentValue_(value) {
@@ -741,17 +725,66 @@ function roundIndentValue_(value) {
 }
 
 function setParagraphSpacing(before, after, lineSpacing) {
-  eachSelectedParagraph_(p => {
-    if (before !== null && before !== undefined) p.setSpacingBefore(Number(before));
-    if (after !== null && after !== undefined) p.setSpacingAfter(Number(after));
-    if (lineSpacing) p.setLineSpacing(Number(lineSpacing));
+  const started = Date.now();
+  const paragraphs = getStyleTargetParagraphs_();
+
+  if (!paragraphs.length) {
+    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
+  }
+
+  const attribute = DocumentApp.Attribute;
+  const attributes = {};
+
+  if (before !== null && before !== undefined) {
+    const value = Number(before);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error('Spacing before must be zero or greater.');
+    }
+    attributes[attribute.SPACING_BEFORE] = value;
+  }
+
+  if (after !== null && after !== undefined) {
+    const value = Number(after);
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error('Spacing after must be zero or greater.');
+    }
+    attributes[attribute.SPACING_AFTER] = value;
+  }
+
+  if (lineSpacing !== null && lineSpacing !== undefined) {
+    const value = Number(lineSpacing);
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new Error('Line spacing must be greater than zero.');
+    }
+    attributes[attribute.LINE_SPACING] = value;
+  }
+
+  paragraphs.forEach(p => {
+    p.setAttributes(attributes);
   });
-  return true;
+
+  return {
+    ok: true,
+    paragraphs: paragraphs.length,
+    elapsedMs: Date.now() - started
+  };
 }
 
 function setKeepWithNext(value) {
-  eachSelectedParagraph_(p => p.setKeepWithNext(Boolean(value)));
-  return true;
+  const started = Date.now();
+  const paragraphs = getStyleTargetParagraphs_();
+
+  if (!paragraphs.length) {
+    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
+  }
+
+  paragraphs.forEach(p => p.setKeepWithNext(Boolean(value)));
+
+  return {
+    ok: true,
+    paragraphs: paragraphs.length,
+    elapsedMs: Date.now() - started
+  };
 }
 
 /**
@@ -997,16 +1030,54 @@ function uiListBodyChildIndex_(body, paragraph) {
   }
 }
 function insertBreak(kind) {
+  const started = Date.now();
   const doc = DocumentApp.getActiveDocument();
-  const cursor = doc.getCursor();
-  if (!cursor) throw new Error('Place the cursor where the break should be inserted.');
+  const requested = String(kind || 'PAGE').toUpperCase();
 
-  if (kind === 'PAGE') {
-    cursor.insertPageBreak();
-    return true;
+  if (requested !== 'PAGE') {
+    throw new Error('Only local page breaks are supported.');
   }
 
-  throw new Error('Section breaks require the advanced Google Docs API. The UI is prepared; implementation is the next step.');
+  const selection = doc.getSelection();
+
+  if (selection) {
+    const ranges = selection.getRangeElements();
+
+    if (ranges.length) {
+      const body = getActiveBody_();
+      const first = getTopLevelElementForParent_(
+        ranges[0].getElement(),
+        body
+      );
+
+      if (!first) {
+        throw new Error('The selection must be inside the active document body.');
+      }
+
+      body.insertPageBreak(body.getChildIndex(first));
+
+      return {
+        ok: true,
+        kind: 'PAGE',
+        location: 'SELECTION_START',
+        elapsedMs: Date.now() - started
+      };
+    }
+  }
+
+  const cursor = doc.getCursor();
+  if (!cursor) {
+    throw new Error('Place the cursor or select the block before which the page break should be inserted.');
+  }
+
+  cursor.insertPageBreak();
+
+  return {
+    ok: true,
+    kind: 'PAGE',
+    location: 'CURSOR',
+    elapsedMs: Date.now() - started
+  };
 }
 
 function getSelectedParagraphs_() {
@@ -1014,6 +1085,7 @@ function getSelectedParagraphs_() {
   if (!selection) return [];
 
   const paragraphs = [];
+  const seen = {};
 
   selection.getRangeElements().forEach(re => {
     let el = re.getElement();
@@ -1028,15 +1100,58 @@ function getSelectedParagraphs_() {
       el = el.getParent();
     }
 
-    // Compare element objects directly instead of String(el).
-    // String(el) is not a reliable unique identifier and could cause
-    // multiple selected paragraphs to be treated as the same paragraph.
-    if (el && paragraphs.indexOf(el) === -1) {
+    const key = el ? buildElementPathKey_(el) : '';
+
+    if (el && key && !seen[key]) {
+      seen[key] = true;
       paragraphs.push(el);
     }
   });
 
   return paragraphs;
+}
+
+/**
+ * Returns every body-level paragraph/ListItem between the first and last
+ * selected elements. This includes blank lines that Google Docs may omit from
+ * Selection.getRangeElements(). A selection contained inside one table falls
+ * back to the table-cell paragraphs returned by getSelectedParagraphs_().
+ */
+function getContiguousSelectedParagraphs_(selection) {
+  const body = getActiveBody_();
+  const ranges = selection ? selection.getRangeElements() : [];
+  const paragraphs = [];
+
+  if (!ranges.length) return paragraphs;
+
+  const first = getTopLevelBodyElement_(ranges[0].getElement(), body);
+  const last = getTopLevelBodyElement_(
+    ranges[ranges.length - 1].getElement(),
+    body
+  );
+
+  if (first && last) {
+    const firstIndex = body.getChildIndex(first);
+    const lastIndex = body.getChildIndex(last);
+    const minIndex = Math.min(firstIndex, lastIndex);
+    const maxIndex = Math.max(firstIndex, lastIndex);
+
+    for (let index = minIndex; index <= maxIndex; index++) {
+      const element = body.getChild(index);
+      const type = element.getType();
+
+      if (
+        type === DocumentApp.ElementType.PARAGRAPH ||
+        type === DocumentApp.ElementType.LIST_ITEM
+      ) {
+        paragraphs.push(element);
+      }
+    }
+  }
+
+  return paragraphs.length
+    ? paragraphs
+    : getSelectedParagraphs_();
 }
 
 /**
@@ -1051,7 +1166,7 @@ function getStyleTargetParagraphs_() {
   const selection = doc.getSelection();
 
   if (selection) {
-    return getSelectedParagraphs_();
+    return getContiguousSelectedParagraphs_(selection);
   }
 
   const cursor = doc.getCursor();
@@ -1060,23 +1175,6 @@ function getStyleTargetParagraphs_() {
   const paragraph = getOwningParagraph_(cursor.getElement());
   return paragraph ? [paragraph] : [];
 }
-
-/**
- * Returns only the paragraph/ListItem that owns the cursor.
- */
-function getCurrentParagraph_() {
-  const cursor = DocumentApp.getActiveDocument().getCursor();
-  return cursor ? getOwningParagraph_(cursor.getElement()) : null;
-}
-
-function eachSelectedParagraph_(fn) {
-  const paragraphs = getStyleTargetParagraphs_();
-  if (!paragraphs.length) {
-    throw new Error('Place the cursor in a paragraph or select one or more paragraphs.');
-  }
-  paragraphs.forEach(fn);
-}
-
 
 function formatEquationLine() {
   const targets = getStyleTargetParagraphs_();
@@ -2226,259 +2324,6 @@ function getCaptionOrdinalByPreviousCaptions_(targetParagraph, type) {
   return count + 1;
 }
 
-/**
- * Full Smart Format
- * -----------------
- * One Gemini classification request for the entire selected text, followed
- * by deterministic local formatting. Actual table objects and image objects
- * are intentionally not reformatted here for speed/safety.
- */
-function smartFormatSelection() {
-  const selection = DocumentApp.getActiveDocument().getSelection();
-  if (!selection) {
-    throw new Error('Select the text you want to format completely.');
-  }
-
-  const allTargets = getSelectedParagraphs_();
-  if (!allTargets.length) {
-    throw new Error('No paragraphs were found in the selection.');
-  }
-
-  // Actual table contents keep their dedicated formatter.
-  const targets = allTargets.filter(p => !isInsideTable_(p));
-  const skippedTableParagraphs = allTargets.length - targets.length;
-
-  const items = [];
-  const targetById = {};
-  const ambiguous = [];
-
-  targets.forEach((p, index) => {
-    const value = p.getText();
-    if (!value.trim()) return;
-
-    const id = 'p' + index;
-    const detected = detectFormattingType_(p, value);
-
-    const item = {
-      id: id,
-      text: value,
-      fixedType: detected || '',
-      existingHeading: getCurrentHeadingName_(p),
-      existingList: getCurrentListType_(p)
-    };
-
-    items.push(item);
-    targetById[id] = p;
-
-    if (!detected) ambiguous.push(item);
-  });
-
-  if (!items.length) {
-    throw new Error('The selection contains no text paragraphs to format.');
-  }
-
-  // Gemini is used only where document structure is genuinely ambiguous.
-  // This is more reliable for long selections than asking it to classify
-  // obvious bullets, captions and numbered subsections too.
-  const aiPlan = ambiguous.length
-    ? classifyFormattingPlanWithGemini_(addFormattingContext_(items, ambiguous))
-    : [];
-
-  const typeById = {};
-  items.forEach(item => {
-    if (item.fixedType) typeById[item.id] = item.fixedType;
-  });
-  aiPlan.forEach(x => {
-    if (!typeById[x.id]) typeById[x.id] = x.type;
-  });
-
-  // Any item omitted by Gemini safely falls back to Normal text.
-  items.forEach(item => {
-    if (!typeById[item.id]) typeById[item.id] = 'normal';
-  });
-
-  // Captions already recognizable from their text are numbered in one scan.
-  const captionNumbers = buildCaptionNumberPlan_(items, targetById);
-
-  let formatted = 0;
-  let headings = 0;
-  let lists = 0;
-  let captions = 0;
-  let notes = 0;
-  let normal = 0;
-  const styleAssignments = [];
-  const body = getActiveBody_();
-  let activeListAnchor = null;
-  let activeListType = '';
-  let previousItemIndex = -1;
-
-  items.forEach(item => {
-    let p = targetById[item.id];
-    if (!p) return;
-
-    const type = typeById[item.id];
-    const isListType = ['bullet', 'number', 'letter', 'roman'].indexOf(type) >= 0;
-    const itemIndex = parseInt(String(item.id).substring(1), 10);
-    const isContiguous = previousItemIndex >= 0 && itemIndex === previousItemIndex + 1;
-
-    if (!isListType || !isContiguous) {
-      activeListAnchor = null;
-      activeListType = '';
-    }
-
-    switch (type) {
-      case 'heading1':
-        styleAssignments.push({paragraph: p, styleName: 'H1'}); headings++; break;
-      case 'heading2':
-        styleAssignments.push({paragraph: p, styleName: 'H2'}); headings++; break;
-      case 'heading3':
-        styleAssignments.push({paragraph: p, styleName: 'H3'}); headings++; break;
-      case 'heading4':
-        styleAssignments.push({paragraph: p, styleName: 'H4'}); headings++; break;
-      case 'heading5':
-        styleAssignments.push({paragraph: p, styleName: 'H5'}); headings++; break;
-      case 'heading6':
-        styleAssignments.push({paragraph: p, styleName: 'H6'}); headings++; break;
-
-      case 'bullet':
-      case 'number':
-      case 'letter':
-      case 'roman': {
-        const listType = type.toUpperCase();
-        const continuationAnchor = activeListType === listType
-          ? activeListAnchor
-          : null;
-
-        stripManualListPrefix_(p, listType);
-
-        const listResult = applyFastNativeListToParagraphs_(
-          body,
-          [p],
-          listType,
-          continuationAnchor
-        );
-
-        p = listResult.listItems[0];
-        targetById[item.id] = p;
-        activeListAnchor = listResult.firstListItem;
-        activeListType = listType;
-        lists++;
-        break;
-      }
-
-      case 'figure_caption':
-      case 'table_caption': {
-        const parsed = parseCaptionLine_(p.getText());
-        if (parsed) {
-          const captionType = type === 'figure_caption' ? 'Figure' : 'Table';
-          const n = captionNumbers[item.id] || getCaptionOrdinal_(p, captionType);
-          formatCaptionParagraph_(p, captionType, parsed.description, n);
-          captions++;
-        } else {
-          // If Gemini inferred a caption without an explicit prefix, do not
-          // invent whether it is Figure/Table here; keep the content safe.
-          styleAssignments.push({paragraph: p, styleName: 'NORMAL'});
-          normal++;
-        }
-        break;
-      }
-
-      case 'note':
-        formatNoteParagraph_(p, parseNoteLine_(p.getText()).description);
-        notes++;
-        break;
-
-      case 'normal':
-      default:
-        styleAssignments.push({paragraph: p, styleName: 'NORMAL'});
-        normal++;
-        break;
-    }
-
-    formatted++;
-    previousItemIndex = itemIndex;
-  });
-
-  styleAssignments.forEach(assignment => {
-    applyStyleToParagraph_(assignment.paragraph, assignment.styleName);
-  });
-
-  DocumentApp.getActiveDocument().saveAndClose();
-
-  return {
-    ok: true,
-    formatted: formatted,
-    headings: headings,
-    lists: lists,
-    captions: captions,
-    notes: notes,
-    normal: normal,
-    aiClassified: ambiguous.length,
-    skippedTableParagraphs: skippedTableParagraphs
-  };
-}
-
-function detectFormattingType_(p, value) {
-  const text = String(value || '').trim();
-  if (!text) return 'normal';
-
-  // Preserve an existing native heading assignment.
-  const existingHeading = getCurrentHeadingName_(p);
-  if (/^heading[1-6]$/.test(existingHeading)) return existingHeading;
-
-  // Existing native list items are highly reliable evidence.
-  const existingList = getCurrentListType_(p);
-  if (existingList) return existingList;
-
-  const caption = parseCaptionLine_(text);
-  if (caption) {
-    return caption.type === 'Figure' ? 'figure_caption' : 'table_caption';
-  }
-
-  if (/^\s*(?:Notes?|Notas?)\b(?:\s*[.:–—-]|\s+)/i.test(text)) {
-    return 'note';
-  }
-
-  // Explicit textual list markers.
-  if (/^\s*[•●○▪◦‣⁃-]\s+/.test(text)) return 'bullet';
-
-  // Roman must be tested before letters because "i)" is also a letter.
-  if (/^\s*(?:[ivxlcdm]+)[.)]\s+/i.test(text)) return 'roman';
-  if (/^\s*[A-Za-zÁÉÍÓÚÜÑáéíóúüñ][.)]\s+/.test(text)) return 'letter';
-
-  // Decimal section numbering is deterministic:
-  // 1.1 -> H2, 1.1.1 -> H3, etc.
-  const section = text.match(/^\s*(\d+(?:\.\d+)+)\.?\s+\S/);
-  if (section) {
-    const depth = section[1].split('.').length;
-    return 'heading' + Math.min(depth, 6);
-  }
-
-  // A plain integer prefix such as "1. ..." is ambiguous: it may be H1
-  // or an ordered list. Leave it to Gemini with surrounding context.
-  // Unnumbered short title-like lines are also left to Gemini.
-
-  // Long prose ending in normal sentence punctuation is safe to classify
-  // locally, reducing Gemini load on large documents.
-  const words = text.split(/\s+/).length;
-  if (words >= 18 && /[.!?]$/.test(text)) return 'normal';
-
-  return '';
-}
-
-function getCurrentHeadingName_(p) {
-  try {
-    const h = String(p.getHeading());
-    const map = {
-      HEADING1:'heading1', HEADING2:'heading2', HEADING3:'heading3',
-      HEADING4:'heading4', HEADING5:'heading5', HEADING6:'heading6'
-    };
-    return map[h] || '';
-  } catch (e) {
-    return '';
-  }
-}
-
 function getCurrentListType_(p) {
   if (p.getType() !== DocumentApp.ElementType.LIST_ITEM) return '';
 
@@ -2492,23 +2337,6 @@ function getCurrentListType_(p) {
   } catch (e) {
     return 'bullet';
   }
-}
-
-function addFormattingContext_(allItems, ambiguousItems) {
-  const indexById = {};
-  allItems.forEach((x, i) => indexById[x.id] = i);
-
-  return ambiguousItems.map(item => {
-    const i = indexById[item.id];
-    return {
-      id: item.id,
-      text: item.text,
-      existingHeading: item.existingHeading || '',
-      existingList: item.existingList || '',
-      previous: i > 0 ? allItems[i - 1].text : '',
-      next: i < allItems.length - 1 ? allItems[i + 1].text : ''
-    };
-  });
 }
 
 function stripManualListPrefix_(p, type) {
@@ -2548,25 +2376,4 @@ function isInsideTable_(el) {
     current = current.getParent ? current.getParent() : null;
   }
   return false;
-}
-
-function buildCaptionNumberPlan_(items, targetById) {
-  const result = {};
-
-  items.forEach(item => {
-    if (
-      item.fixedType !== 'figure_caption' &&
-      item.fixedType !== 'table_caption'
-    ) {
-      return;
-    }
-
-    const p = targetById[item.id];
-    if (!p) return;
-
-    const type = item.fixedType === 'figure_caption' ? 'Figure' : 'Table';
-    result[item.id] = getCaptionOrdinal_(p, type);
-  });
-
-  return result;
 }
