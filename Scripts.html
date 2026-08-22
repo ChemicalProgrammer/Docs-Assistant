@@ -209,6 +209,50 @@ function formatSelectedStyles(e) {
         );
       }
 
+      if (result.tables) {
+        parts.push(
+          result.tables +
+          ' table' +
+          (result.tables === 1 ? '' : 's')
+        );
+      }
+
+      if (result.lists) {
+        parts.push(
+          result.lists +
+          ' list item' +
+          (result.lists === 1 ? '' : 's')
+        );
+      }
+
+      const captions =
+        Number(result.figures || 0) +
+        Number(result.tableCaptions || 0);
+
+      if (captions) {
+        parts.push(
+          captions +
+          ' caption' +
+          (captions === 1 ? '' : 's')
+        );
+      }
+
+      if (result.notes) {
+        parts.push(
+          result.notes +
+          ' note' +
+          (result.notes === 1 ? '' : 's')
+        );
+      }
+
+      if (result.equations) {
+        parts.push(
+          result.equations +
+          ' equation' +
+          (result.equations === 1 ? '' : 's')
+        );
+      }
+
       if (result.normal) {
         parts.push(
           result.normal +
