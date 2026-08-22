@@ -18,12 +18,23 @@ function testFormatSelectedSection_() {
   }
 
   const body = getActiveBody_();
+
+  const selectionAnalysisStarted = Date.now();
   const selectedRange = testGetSelectedBodyRange_(selection, body);
-  const objectIndex = testBuildDocumentObjectIndex_(body);
+  const selectionPlan = testBuildSelectionPlan_(body, selectedRange);
+  const selectionAnalysisMs = Date.now() - selectionAnalysisStarted;
+
+  const indexStarted = Date.now();
+  const objectIndex = testBuildNeededDocumentIndex_(
+    body,
+    selectionPlan.requirements,
+    selectionPlan.selectedEquationEntries
+  );
+  const indexMs = Date.now() - indexStarted;
 
   const report = {
     ok: true,
-    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT',
+    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT-V2',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -44,47 +55,46 @@ function testFormatSelectedSection_() {
   };
 
   const listActions = [];
+  const mainFormattingStarted = Date.now();
 
-  for (
-    let bodyIndex = selectedRange.firstIndex;
-    bodyIndex <= selectedRange.lastIndex;
-    bodyIndex++
-  ) {
-    const element = body.getChild(bodyIndex);
-    const elementType = element.getType();
+  selectionPlan.entries.forEach(function(entry) {
+    const element = entry.element;
+    const bodyIndex = entry.bodyIndex;
 
-    if (elementType === DocumentApp.ElementType.TABLE) {
+    if (entry.kind === 'EQUATION_TABLE') {
       const equationNumber = objectIndex.equationNumberByBodyIndex[bodyIndex];
 
-      if (equationNumber) {
-        const equationResult = testFormatEquationLayoutNumber_(
-          element.asTable(),
-          equationNumber
-        );
-
-        report.equations++;
-        if (equationResult.numberCorrected) {
-          report.equationNumbersCorrected++;
-        }
-      } else {
-        const tableResult = testFormatTableElement_(element.asTable());
-        report.tables++;
-        report.tableCells += tableResult.cells;
+      if (!equationNumber) {
+        throw new Error('Could not resolve the selected equation number.');
       }
 
-      continue;
+      const equationResult = testFormatEquationLayoutNumber_(
+        element.asTable(),
+        equationNumber
+      );
+
+      report.equations++;
+      if (equationResult.numberCorrected) {
+        report.equationNumbersCorrected++;
+      }
+
+      return;
     }
 
-    if (
-      elementType !== DocumentApp.ElementType.PARAGRAPH &&
-      elementType !== DocumentApp.ElementType.LIST_ITEM
-    ) {
+    if (entry.kind === 'TABLE') {
+      const tableResult = testFormatTableElement_(element.asTable());
+      report.tables++;
+      report.tableCells += tableResult.cells;
+      return;
+    }
+
+    if (entry.kind === 'SKIP') {
       report.skipped++;
-      continue;
+      return;
     }
 
     const paragraph = element;
-    const classification = testClassifySectionParagraph_(paragraph);
+    const classification = entry.classification;
 
     if (classification.kind === 'LIST') {
       listActions.push({
@@ -92,7 +102,7 @@ function testFormatSelectedSection_() {
         paragraph: paragraph,
         listType: classification.listType
       });
-      continue;
+      return;
     }
 
     if (classification.kind === 'NOTE') {
@@ -101,7 +111,7 @@ function testFormatSelectedSection_() {
         parseNoteLine_(paragraph.getText()).description
       );
       report.notes++;
-      continue;
+      return;
     }
 
     if (
@@ -122,7 +132,7 @@ function testFormatSelectedSection_() {
 
       if (number === null || number === undefined) {
         report.captionsSkippedBeforeAnchor++;
-        continue;
+        return;
       }
 
       formatCaptionParagraph_(
@@ -135,7 +145,7 @@ function testFormatSelectedSection_() {
       if (captionType === 'Figure') report.figures++;
       else report.tableCaptions++;
 
-      continue;
+      return;
     }
 
     applyStyleToParagraph_(paragraph, classification.styleName);
@@ -152,7 +162,10 @@ function testFormatSelectedSection_() {
     } else {
       report.normal++;
     }
-  }
+  });
+
+  const mainFormattingMs = Date.now() - mainFormattingStarted;
+  const listFormattingStarted = Date.now();
 
   const listRuns = testGroupContiguousListActions_(listActions);
 
@@ -174,17 +187,100 @@ function testFormatSelectedSection_() {
     report.listRuns++;
   });
 
+  const listFormattingMs = Date.now() - listFormattingStarted;
+  const saveStarted = Date.now();
   doc.saveAndClose();
+  const saveMs = Date.now() - saveStarted;
 
-  report.selectedBodyElements =
-    selectedRange.lastIndex - selectedRange.firstIndex + 1;
+  report.selectedBodyElements = selectionPlan.entries.length;
+  report.tableIndexBuilt = selectionPlan.requirements.tableIndex;
+  report.figureIndexBuilt = selectionPlan.requirements.figureIndex;
+  report.equationIndexBuilt = selectionPlan.requirements.equationIndex;
   report.documentPhysicalTables = objectIndex.physicalTables;
   report.documentRealTables = objectIndex.tableIndices.length;
   report.documentEquationTables = objectIndex.equationIndices.length;
   report.documentFigures = objectIndex.figureIndices.length;
+  report.equationMarkerMigrationPerformed =
+    objectIndex.markerMigrationPerformed;
+  report.equationMarkerCount = objectIndex.equationIndices.length;
+  report.selectionAnalysisMs = selectionAnalysisMs;
+  report.equationMarkerMigrationMs = objectIndex.markerMigrationMs;
+  report.indexMs = indexMs;
+  report.mainFormattingMs = mainFormattingMs;
+  report.listFormattingMs = listFormattingMs;
+  report.saveMs = saveMs;
   report.elapsedMs = Date.now() - started;
 
   return report;
+}
+
+function testBuildSelectionPlan_(body, selectedRange) {
+  const entries = [];
+  const selectedEquationEntries = [];
+  const requirements = {
+    tableIndex: false,
+    figureIndex: false,
+    equationIndex: false
+  };
+
+  for (
+    let bodyIndex = selectedRange.firstIndex;
+    bodyIndex <= selectedRange.lastIndex;
+    bodyIndex++
+  ) {
+    const element = body.getChild(bodyIndex);
+    const elementType = element.getType();
+
+    if (elementType === DocumentApp.ElementType.TABLE) {
+      const isEquation = isEquationLayoutTable_(element.asTable());
+      const entry = {
+        kind: isEquation ? 'EQUATION_TABLE' : 'TABLE',
+        bodyIndex: bodyIndex,
+        element: element
+      };
+
+      entries.push(entry);
+
+      if (isEquation) {
+        selectedEquationEntries.push(entry);
+        requirements.equationIndex = true;
+      }
+
+      continue;
+    }
+
+    if (
+      elementType !== DocumentApp.ElementType.PARAGRAPH &&
+      elementType !== DocumentApp.ElementType.LIST_ITEM
+    ) {
+      entries.push({
+        kind: 'SKIP',
+        bodyIndex: bodyIndex,
+        element: element
+      });
+      continue;
+    }
+
+    const classification = testClassifySectionParagraph_(element);
+    entries.push({
+      kind: 'PARAGRAPH',
+      bodyIndex: bodyIndex,
+      element: element,
+      classification: classification
+    });
+
+    if (classification.kind === 'TABLE_CAPTION') {
+      requirements.tableIndex = true;
+    } else if (classification.kind === 'FIGURE_CAPTION') {
+      requirements.figureIndex = true;
+    }
+  }
+
+  return {
+    entries: entries,
+    selectedEquationEntries: selectedEquationEntries,
+    requirements: requirements
+  };
 }
 
 function testGetSelectedBodyRange_(selection, body) {
@@ -216,33 +312,59 @@ function testGetSelectedBodyRange_(selection, body) {
 }
 
 /**
- * Construye una sola vez el índice de objetos del documento.
+ * Construye únicamente los índices que necesita la selección actual.
  */
-function testBuildDocumentObjectIndex_(body) {
+function testBuildNeededDocumentIndex_(
+  body,
+  requirements,
+  selectedEquationEntries
+) {
   const tableIndices = [];
   const equationIndices = [];
   const equationNumberByBodyIndex = {};
   const figureIndices = [];
-  let physicalTables = 0;
+  let physicalTables = null;
+  let markerMigrationPerformed = false;
+  let markerMigrationMs = 0;
 
-  for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
-    const element = body.getChild(bodyIndex);
+  const needsTableObjects =
+    requirements.tableIndex || requirements.equationIndex;
 
-    if (element.getType() === DocumentApp.ElementType.TABLE) {
+  if (needsTableObjects) {
+    const markerResult = testEnsureEquationTableMarkers_(
+      body,
+      selectedEquationEntries
+    );
+
+    markerMigrationPerformed = markerResult.migrationPerformed;
+    markerMigrationMs = markerResult.elapsedMs;
+    physicalTables = 0;
+
+    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
+      const element = body.getChild(bodyIndex);
+      if (element.getType() !== DocumentApp.ElementType.TABLE) continue;
+
       physicalTables++;
 
-      if (isEquationLayoutTable_(element.asTable())) {
+      if (markerResult.markerIndexSet[bodyIndex]) {
         equationIndices.push(bodyIndex);
         equationNumberByBodyIndex[bodyIndex] = equationIndices.length;
       } else {
         tableIndices.push(bodyIndex);
       }
-
-      continue;
     }
+  }
 
-    if (isStandaloneFigureBlock_(element)) {
-      figureIndices.push(bodyIndex);
+  if (requirements.figureIndex) {
+    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
+      const element = body.getChild(bodyIndex);
+
+      if (
+        element.getType() !== DocumentApp.ElementType.TABLE &&
+        isStandaloneFigureBlock_(element)
+      ) {
+        figureIndices.push(bodyIndex);
+      }
     }
   }
 
@@ -251,8 +373,111 @@ function testBuildDocumentObjectIndex_(body) {
     tableIndices: tableIndices,
     equationIndices: equationIndices,
     equationNumberByBodyIndex: equationNumberByBodyIndex,
-    figureIndices: figureIndices
+    figureIndices: figureIndices,
+    markerMigrationPerformed: markerMigrationPerformed,
+    markerMigrationMs: markerMigrationMs
   };
+}
+
+const TEST_EQUATION_MARKER_NAME_ =
+  'DOCS_ASSISTANT_EQUATION_LAYOUT_MARKER';
+
+/**
+ * Las tablas de ecuación se detectan estructuralmente una sola vez. Después
+ * quedan identificadas mediante NamedRanges que se desplazan con el contenido.
+ */
+function testEnsureEquationTableMarkers_(body, selectedEquationEntries) {
+  const started = Date.now();
+  const markerIndexSet = testReadEquationMarkerIndices_(body);
+  const migrationProperty = testGetEquationMarkerMigrationProperty_();
+  const properties = PropertiesService.getDocumentProperties();
+  const migrationAlreadyDone = properties &&
+    properties.getProperty(migrationProperty) === '1';
+  let migrationPerformed = false;
+
+  /*
+   * Una ecuación seleccionada se marca inmediatamente. Esto también protege
+   * ecuaciones nuevas creadas durante las pruebas.
+   */
+  (selectedEquationEntries || []).forEach(function(entry) {
+    if (markerIndexSet[entry.bodyIndex]) return;
+
+    testAddEquationTableMarker_(entry.element.asTable());
+    markerIndexSet[entry.bodyIndex] = true;
+  });
+
+  if (!migrationAlreadyDone) {
+    migrationPerformed = true;
+
+    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
+      const element = body.getChild(bodyIndex);
+
+      if (
+        element.getType() !== DocumentApp.ElementType.TABLE ||
+        markerIndexSet[bodyIndex]
+      ) {
+        continue;
+      }
+
+      if (isEquationLayoutTable_(element.asTable())) {
+        testAddEquationTableMarker_(element.asTable());
+        markerIndexSet[bodyIndex] = true;
+      }
+    }
+
+    if (properties) {
+      properties.setProperty(migrationProperty, '1');
+    }
+  }
+
+  return {
+    markerIndexSet: markerIndexSet,
+    migrationPerformed: migrationPerformed,
+    elapsedMs: Date.now() - started
+  };
+}
+
+function testReadEquationMarkerIndices_(body) {
+  const indexSet = {};
+  const namedRanges = getActiveTabNamedRanges_(TEST_EQUATION_MARKER_NAME_);
+
+  namedRanges.forEach(function(namedRange) {
+    try {
+      const ranges = namedRange.getRange().getRangeElements();
+
+      ranges.forEach(function(rangeElement) {
+        const top = getTopLevelElementForParent_(
+          rangeElement.getElement(),
+          body
+        );
+
+        if (!top || top.getType() !== DocumentApp.ElementType.TABLE) return;
+        indexSet[body.getChildIndex(top)] = true;
+      });
+    } catch (error) {}
+  });
+
+  return indexSet;
+}
+
+function testAddEquationTableMarker_(table) {
+  const rightCell = table.getRow(0).getCell(2);
+  const paragraph = rightCell.getChild(0).asParagraph();
+  addActiveTabNamedRange_(TEST_EQUATION_MARKER_NAME_, paragraph);
+}
+
+function testGetEquationMarkerMigrationProperty_() {
+  let tabId = 'LEGACY';
+
+  try {
+    const tab = DocumentApp.getActiveDocument().getActiveTab();
+    if (tab && tab.getId) tabId = String(tab.getId());
+  } catch (error) {}
+
+  return (
+    'DOCS_ASSISTANT_EQUATION_MARKERS_MIGRATED_' +
+    tabId.replace(/[^A-Za-z0-9_-]/g, '_')
+  );
 }
 
 function testClassifySectionParagraph_(paragraph) {
