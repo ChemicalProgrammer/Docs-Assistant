@@ -34,7 +34,7 @@ function testFormatSelectedSection_() {
 
   const report = {
     ok: true,
-    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT-V2',
+    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT-V3',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -203,8 +203,14 @@ function testFormatSelectedSection_() {
   report.equationMarkerMigrationPerformed =
     objectIndex.markerMigrationPerformed;
   report.equationMarkerCount = objectIndex.equationIndices.length;
+  report.figureMarkerMigrationPerformed =
+    objectIndex.figureMarkerMigrationPerformed;
+  report.figureMarkerCount = objectIndex.figureIndices.length;
   report.selectionAnalysisMs = selectionAnalysisMs;
   report.equationMarkerMigrationMs = objectIndex.markerMigrationMs;
+  report.figureMarkerMigrationMs = objectIndex.figureMarkerMigrationMs;
+  report.tableIndexMs = objectIndex.tableIndexMs;
+  report.figureIndexMs = objectIndex.figureIndexMs;
   report.indexMs = indexMs;
   report.mainFormattingMs = mainFormattingMs;
   report.listFormattingMs = listFormattingMs;
@@ -326,11 +332,16 @@ function testBuildNeededDocumentIndex_(
   let physicalTables = null;
   let markerMigrationPerformed = false;
   let markerMigrationMs = 0;
+  let figureMarkerMigrationPerformed = false;
+  let figureMarkerMigrationMs = 0;
+  let tableIndexMs = 0;
+  let figureIndexMs = 0;
 
   const needsTableObjects =
     requirements.tableIndex || requirements.equationIndex;
 
   if (needsTableObjects) {
+    const tableIndexStarted = Date.now();
     const markerResult = testEnsureEquationTableMarkers_(
       body,
       selectedEquationEntries
@@ -353,19 +364,26 @@ function testBuildNeededDocumentIndex_(
         tableIndices.push(bodyIndex);
       }
     }
+
+    tableIndexMs = Date.now() - tableIndexStarted;
   }
 
   if (requirements.figureIndex) {
-    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
-      const element = body.getChild(bodyIndex);
+    const figureIndexStarted = Date.now();
+    const figureMarkerResult = testEnsureFigureBlockMarkers_(body);
 
-      if (
-        element.getType() !== DocumentApp.ElementType.TABLE &&
-        isStandaloneFigureBlock_(element)
-      ) {
+    figureMarkerMigrationPerformed =
+      figureMarkerResult.migrationPerformed;
+    figureMarkerMigrationMs = figureMarkerResult.elapsedMs;
+
+    Object.keys(figureMarkerResult.markerIndexSet)
+      .map(Number)
+      .sort(function(a, b) { return a - b; })
+      .forEach(function(bodyIndex) {
         figureIndices.push(bodyIndex);
-      }
-    }
+      });
+
+    figureIndexMs = Date.now() - figureIndexStarted;
   }
 
   return {
@@ -375,7 +393,11 @@ function testBuildNeededDocumentIndex_(
     equationNumberByBodyIndex: equationNumberByBodyIndex,
     figureIndices: figureIndices,
     markerMigrationPerformed: markerMigrationPerformed,
-    markerMigrationMs: markerMigrationMs
+    markerMigrationMs: markerMigrationMs,
+    figureMarkerMigrationPerformed: figureMarkerMigrationPerformed,
+    figureMarkerMigrationMs: figureMarkerMigrationMs,
+    tableIndexMs: tableIndexMs,
+    figureIndexMs: figureIndexMs
   };
 }
 
@@ -476,6 +498,94 @@ function testGetEquationMarkerMigrationProperty_() {
 
   return (
     'DOCS_ASSISTANT_EQUATION_MARKERS_MIGRATED_' +
+    tabId.replace(/[^A-Za-z0-9_-]/g, '_')
+  );
+}
+
+const TEST_FIGURE_MARKER_NAME_ =
+  'DOCS_ASSISTANT_FIGURE_BLOCK_MARKER';
+
+/**
+ * Detecta todos los bloques de figura una sola vez y los identifica mediante
+ * NamedRanges. Después, la numeración obtiene sus posiciones desde esos
+ * marcadores sin volver a abrir cada párrafo del documento.
+ */
+function testEnsureFigureBlockMarkers_(body) {
+  const started = Date.now();
+  const markerIndexSet = testReadFigureMarkerIndices_(body);
+  const migrationProperty = testGetFigureMarkerMigrationProperty_();
+  const properties = PropertiesService.getDocumentProperties();
+  const migrationAlreadyDone = properties &&
+    properties.getProperty(migrationProperty) === '1';
+  let migrationPerformed = false;
+
+  if (!migrationAlreadyDone) {
+    migrationPerformed = true;
+
+    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
+      if (markerIndexSet[bodyIndex]) continue;
+
+      const element = body.getChild(bodyIndex);
+      if (!isStandaloneFigureBlock_(element)) continue;
+
+      addActiveTabNamedRange_(TEST_FIGURE_MARKER_NAME_, element);
+      markerIndexSet[bodyIndex] = true;
+    }
+
+    if (properties) {
+      properties.setProperty(migrationProperty, '1');
+    }
+  }
+
+  return {
+    markerIndexSet: markerIndexSet,
+    migrationPerformed: migrationPerformed,
+    elapsedMs: Date.now() - started
+  };
+}
+
+function testReadFigureMarkerIndices_(body) {
+  const indexSet = {};
+  const namedRanges = getActiveTabNamedRanges_(TEST_FIGURE_MARKER_NAME_);
+
+  namedRanges.forEach(function(namedRange) {
+    try {
+      const ranges = namedRange.getRange().getRangeElements();
+
+      ranges.forEach(function(rangeElement) {
+        const top = getTopLevelElementForParent_(
+          rangeElement.getElement(),
+          body
+        );
+
+        if (!top) return;
+
+        const type = top.getType();
+        if (
+          type !== DocumentApp.ElementType.PARAGRAPH &&
+          type !== DocumentApp.ElementType.LIST_ITEM
+        ) {
+          return;
+        }
+
+        indexSet[body.getChildIndex(top)] = true;
+      });
+    } catch (error) {}
+  });
+
+  return indexSet;
+}
+
+function testGetFigureMarkerMigrationProperty_() {
+  let tabId = 'LEGACY';
+
+  try {
+    const tab = DocumentApp.getActiveDocument().getActiveTab();
+    if (tab && tab.getId) tabId = String(tab.getId());
+  } catch (error) {}
+
+  return (
+    'DOCS_ASSISTANT_FIGURE_MARKERS_MIGRATED_' +
     tabId.replace(/[^A-Za-z0-9_-]/g, '_')
   );
 }
