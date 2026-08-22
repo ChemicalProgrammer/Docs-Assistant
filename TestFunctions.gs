@@ -34,7 +34,7 @@ function testFormatSelectedSection_() {
 
   const report = {
     ok: true,
-    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT-V3',
+    testId: 'COMPLETE-DETERMINISTIC-SECTION-FORMAT-V4',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -197,6 +197,7 @@ function testFormatSelectedSection_() {
   report.figureIndexBuilt = selectionPlan.requirements.figureIndex;
   report.equationIndexBuilt = selectionPlan.requirements.equationIndex;
   report.documentPhysicalTables = objectIndex.physicalTables;
+  report.documentTableCollectionSize = objectIndex.tableCollectionCount;
   report.documentRealTables = objectIndex.tableIndices.length;
   report.documentEquationTables = objectIndex.equationIndices.length;
   report.documentFigures = objectIndex.figureIndices.length;
@@ -330,6 +331,7 @@ function testBuildNeededDocumentIndex_(
   const equationNumberByBodyIndex = {};
   const figureIndices = [];
   let physicalTables = null;
+  let tableCollectionCount = null;
   let markerMigrationPerformed = false;
   let markerMigrationMs = 0;
   let figureMarkerMigrationPerformed = false;
@@ -349,21 +351,41 @@ function testBuildNeededDocumentIndex_(
 
     markerMigrationPerformed = markerResult.migrationPerformed;
     markerMigrationMs = markerResult.elapsedMs;
+    const tables = body.getTables() || [];
+    const seenTableIndices = {};
+    tableCollectionCount = tables.length;
     physicalTables = 0;
 
-    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
-      const element = body.getChild(bodyIndex);
-      if (element.getType() !== DocumentApp.ElementType.TABLE) continue;
+    /*
+     * getTables() obtiene directamente la colección de tablas de la sección.
+     * Evita recorrer uno por uno todos los elementos del documento.
+     * Si existiera una tabla anidada, se conserva únicamente su tabla física
+     * de nivel superior para no alterar el ordinal de las leyendas.
+     */
+    tables.forEach(function(table) {
+      const top = getTopLevelElementForParent_(table, body);
 
+      if (!top || top.getType() !== DocumentApp.ElementType.TABLE) return;
+
+      const bodyIndex = body.getChildIndex(top);
+      if (seenTableIndices[bodyIndex]) return;
+
+      seenTableIndices[bodyIndex] = true;
       physicalTables++;
 
       if (markerResult.markerIndexSet[bodyIndex]) {
         equationIndices.push(bodyIndex);
-        equationNumberByBodyIndex[bodyIndex] = equationIndices.length;
       } else {
         tableIndices.push(bodyIndex);
       }
-    }
+    });
+
+    tableIndices.sort(function(a, b) { return a - b; });
+    equationIndices.sort(function(a, b) { return a - b; });
+
+    equationIndices.forEach(function(bodyIndex, position) {
+      equationNumberByBodyIndex[bodyIndex] = position + 1;
+    });
 
     tableIndexMs = Date.now() - tableIndexStarted;
   }
@@ -388,6 +410,7 @@ function testBuildNeededDocumentIndex_(
 
   return {
     physicalTables: physicalTables,
+    tableCollectionCount: tableCollectionCount,
     tableIndices: tableIndices,
     equationIndices: equationIndices,
     equationNumberByBodyIndex: equationNumberByBodyIndex,
@@ -560,13 +583,14 @@ function testReadFigureMarkerIndices_(body) {
 
         if (!top) return;
 
-        const type = top.getType();
-        if (
-          type !== DocumentApp.ElementType.PARAGRAPH &&
-          type !== DocumentApp.ElementType.LIST_ITEM
-        ) {
-          return;
-        }
+        /*
+         * Un NamedRange de párrafo puede ampliar sus límites cuando se edita
+         * la leyenda contigua. Por eso no basta con aceptar PARAGRAPH: se
+         * vuelve a comprobar que el elemento realmente contenga una imagen o
+         * dibujo independiente. Esto impide que las leyendas se cuenten como
+         * figuras y que el índice crezca de 46 a 56 tras formatearlas.
+         */
+        if (!isStandaloneFigureBlock_(top)) return;
 
         indexSet[body.getChildIndex(top)] = true;
       });
