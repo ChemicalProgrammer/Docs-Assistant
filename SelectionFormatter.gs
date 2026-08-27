@@ -855,14 +855,15 @@ function findCaptionObjectPosition_(indices, referenceIndex, type) {
   if (!indices || !indices.length) return -1;
 
   if (type === 'Figure') {
-    // Figure captions conventionally belong to the last image before them.
-    for (let position = indices.length - 1; position >= 0; position--) {
-      if (indices[position] < referenceIndex) return position;
+    // Figure captions belong to the first image at or after the caption.
+    // Equality supports positioned images anchored to the caption paragraph.
+    for (let position = 0; position < indices.length; position++) {
+      if (indices[position] >= referenceIndex) return position;
     }
 
-    // Fallback for documents that intentionally place captions above figures.
-    for (let position = 0; position < indices.length; position++) {
-      if (indices[position] > referenceIndex) return position;
+    // Fallback for legacy documents whose captions remain below their images.
+    for (let position = indices.length - 1; position >= 0; position--) {
+      if (indices[position] < referenceIndex) return position;
     }
     return -1;
   }

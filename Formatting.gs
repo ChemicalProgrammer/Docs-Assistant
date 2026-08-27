@@ -411,12 +411,12 @@ function classifyParagraphSubtype_(paragraph) {
     if (heading === DocumentApp.ParagraphHeading.HEADING6) return 'H6';
   } catch (e) {}
 
-  if (paragraphContainsFigure_(paragraph)) return 'FIGURE';
-  if (paragraphContainsEquation_(paragraph)) return 'EQUATION';
-
   if (/^\s*figure\b/i.test(trimmed)) return 'FIGURE_CAPTION';
   if (/^\s*table\b/i.test(trimmed)) return 'TABLE_CAPTION';
   if (/^\s*(?:notes?|notas?)\b/i.test(trimmed)) return 'NOTE';
+
+  if (paragraphContainsFigure_(paragraph)) return 'FIGURE';
+  if (paragraphContainsEquation_(paragraph)) return 'EQUATION';
 
   if (paragraph.getType() === DocumentApp.ElementType.LIST_ITEM) {
     return classifyListItem_(paragraph.asListItem());
@@ -441,6 +441,17 @@ function classifyListItem_(item) {
 }
 
 function paragraphContainsFigure_(paragraph) {
+  if (paragraphContainsInlineFigure_(paragraph)) return true;
+
+  try {
+    const positioned = paragraph.getPositionedImages();
+    if (positioned && positioned.length) return true;
+  } catch (e) {}
+
+  return false;
+}
+
+function paragraphContainsInlineFigure_(paragraph) {
   try {
     for (let i = 0; i < paragraph.getNumChildren(); i++) {
       const childType = paragraph.getChild(i).getType();
@@ -452,11 +463,6 @@ function paragraphContainsFigure_(paragraph) {
         return true;
       }
     }
-  } catch (e) {}
-
-  try {
-    const positioned = paragraph.getPositionedImages();
-    if (positioned && positioned.length) return true;
   } catch (e) {}
 
   return false;
@@ -1998,9 +2004,9 @@ function formatCaptionLine(captionType) {
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
     throw new Error('Captions cannot be list items.');
   }
-  if (forcedType === 'Figure' && isStandaloneFigureBlock_(p)) {
+  if (forcedType === 'Figure' && paragraphContainsInlineFigure_(p)) {
     throw new Error(
-      'Place the cursor in a separate caption line below the image. The image paragraph will not be modified.'
+      'Place the cursor in a separate caption line above the inline image. The image paragraph will not be modified.'
     );
   }
 
@@ -2273,6 +2279,11 @@ function formatCaptionParagraph_(p, type, description, number) {
   if (isInsideTable_(p)) {
     throw new Error('Caption formatting is not allowed inside a table.');
   }
+  if (type === 'Figure' && paragraphContainsInlineFigure_(p)) {
+    throw new Error(
+      'A Figure caption must use a separate paragraph above the inline image.'
+    );
+  }
   const captionText = type + ' ' + number + '. ' + String(description || '').trim();
   const verticalLayout = type === 'Figure'
     ? captureCaptionVerticalLayout_(p)
@@ -2515,6 +2526,21 @@ function getCaptionCounterAnchorObjectIndex_(type, parent) {
   const anchorLineIndex = getCaptionCounterAnchorIndex_(normalized, parent);
   if (anchorLineIndex < 0) return -1;
 
+  if (normalized === 'Figure') {
+    // Figure captions are above their images. A positioned image may be
+    // anchored to the same paragraph, so equality is intentionally accepted.
+    for (let i = anchorLineIndex; i < parent.getNumChildren(); i++) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) return i;
+    }
+
+    // Fallback for legacy documents whose captions are still below images.
+    for (let i = anchorLineIndex - 1; i >= 0; i--) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) return i;
+    }
+
+    return -1;
+  }
+
   let bestIndex = -1;
   let bestDistance = Number.MAX_SAFE_INTEGER;
 
@@ -2529,18 +2555,13 @@ function getCaptionCounterAnchorObjectIndex_(type, parent) {
 
     const distance = Math.abs(i - anchorLineIndex);
 
-    // Table captions are usually above the table -> prefer object after.
-    // Figure captions are usually below the figure -> prefer object before.
-    const preferredTie =
-      normalized === 'Table'
-        ? i > anchorLineIndex
-        : i < anchorLineIndex;
+    // Preserve the approved Table behavior: nearest table, preferring the
+    // following table when distances are tied.
+    const preferredTie = i > anchorLineIndex;
 
     const currentBestPreferred =
       bestIndex >= 0 &&
-      (normalized === 'Table'
-        ? bestIndex > anchorLineIndex
-        : bestIndex < anchorLineIndex);
+      bestIndex > anchorLineIndex;
 
     if (
       distance < bestDistance ||
@@ -2801,20 +2822,23 @@ function getFigureCaptionOrdinal_(targetParagraph) {
   }
 
   let nearestFigureIndex = -1;
-  let nearestDistance = Number.MAX_SAFE_INTEGER;
 
-  for (let i = 0; i < parent.getNumChildren(); i++) {
-    const child = parent.getChild(i);
-    if (!isStandaloneFigureBlock_(child)) continue;
-
-    const distance = Math.abs(i - targetIndex);
-
-    if (
-      distance < nearestDistance ||
-      (distance === nearestDistance && i < targetIndex)
-    ) {
-      nearestDistance = distance;
+  // Figure captions are above their image. Include the same paragraph for a
+  // positioned image anchored to the caption line.
+  for (let i = targetIndex; i < parent.getNumChildren(); i++) {
+    if (isStandaloneFigureBlock_(parent.getChild(i))) {
       nearestFigureIndex = i;
+      break;
+    }
+  }
+
+  // Fallback for legacy captions that remain below their image.
+  if (nearestFigureIndex < 0) {
+    for (let i = targetIndex - 1; i >= 0; i--) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) {
+        nearestFigureIndex = i;
+        break;
+      }
     }
   }
 
