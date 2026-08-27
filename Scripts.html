@@ -312,7 +312,14 @@ function formatCaption(type,e){
        `${label} ${r.number||''} formatted`,
        `${following} following renumbered`
      ];
-     if(indexed)parts.push(`${indexed} ${type==='table'?'tables':'figures'} indexed`);
+     if(
+       type==='figure'&&
+       r.numberingBasis==='FIGURE_CAPTIONS_FROM_ANCHOR'
+     ){
+       parts.push('caption sequence from anchor');
+     }else if(indexed){
+       parts.push(`${indexed} ${type==='table'?'tables':'figures'} indexed`);
+     }
      endTask(
        true,
        parts.join(' · ')

@@ -2035,6 +2035,7 @@ function formatCaptionLine(captionType) {
       renumberResult.followingCaptionsRenumbered,
     objectsIndexed: renumberResult.objectsIndexed,
     anchorBodyIndex: renumberResult.anchorBodyIndex,
+    numberingBasis: renumberResult.numberingBasis,
     positionPreserved: renumberResult.positionPreserved,
     elapsedMs: renumberResult.elapsedMs
   };
@@ -2131,12 +2132,18 @@ function formatCaptionAndFollowing_(targetParagraph, type, description) {
   const objectsIndexed = type === 'Table'
     ? objectIndex.tableIndices.length
     : objectIndex.figureIndices.length;
+  const anchorBodyIndex = getCaptionCounterAnchorIndex_(type, body);
+  const numberingBasis =
+    type === 'Figure' && anchorBodyIndex >= 0
+      ? 'FIGURE_CAPTIONS_FROM_ANCHOR'
+      : 'DOCUMENT_OBJECTS';
 
   return {
     number: number,
     followingCaptionsRenumbered: followingCaptionsRenumbered,
     objectsIndexed: objectsIndexed,
-    anchorBodyIndex: getCaptionCounterAnchorIndex_(type, body),
+    anchorBodyIndex: anchorBodyIndex,
+    numberingBasis: numberingBasis,
     localFigureMarkerAdded: localFigureMarker.markerAdded,
     positionPreserved: finalTargetIndex === targetIndex,
     originalBodyIndex: targetIndex,

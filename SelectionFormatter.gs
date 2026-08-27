@@ -31,7 +31,7 @@ function formatSelectedSection_() {
 
   const report = {
     ok: true,
-    engineId: 'DETERMINISTIC-SECTION-FORMAT-V6.7',
+    engineId: 'DETERMINISTIC-SECTION-FORMAT-V6.8',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -935,6 +935,56 @@ function getIndexedCaptionOrdinal_(
   body,
   objectIndex
 ) {
+  const anchorLineIndex = getCaptionCounterAnchorIndex_(type, body);
+
+  /*
+   * Once a Figure anchor is explicitly set, the user's captions define the
+   * numbering sequence. Count valid Figure captions from that anchor and
+   * always count the active line as the next caption, even when it is still
+   * plain unnumbered text. Extra image blocks inside a composite figure do not
+   * advance the caption counter.
+   */
+  if (type === 'Figure' && anchorLineIndex >= 0) {
+    const anchorCaptionIndex = getFigureAnchorCaptionBodyIndex_(
+      body,
+      anchorLineIndex
+    );
+
+    if (anchorCaptionIndex >= 0) {
+      if (captionBodyIndex < anchorCaptionIndex) return null;
+
+      let captionCount = 0;
+
+      for (
+        let bodyIndex = anchorCaptionIndex;
+        bodyIndex <= captionBodyIndex;
+        bodyIndex++
+      ) {
+        const element = body.getChild(bodyIndex);
+        const elementType = element.getType();
+        const canBeCaption =
+          elementType === DocumentApp.ElementType.PARAGRAPH ||
+          elementType === DocumentApp.ElementType.LIST_ITEM;
+        const parsed = canBeCaption
+          ? parseCaptionLine_(element.getText())
+          : null;
+        const isExistingFigureCaption =
+          parsed && parsed.type === 'Figure';
+
+        if (
+          isExistingFigureCaption ||
+          (bodyIndex === captionBodyIndex && !isExistingFigureCaption)
+        ) {
+          captionCount++;
+        }
+      }
+
+      if (captionCount > 0) {
+        return getCaptionCounterStart_('Figure') + captionCount - 1;
+      }
+    }
+  }
+
   const indices = type === 'Table'
     ? objectIndex.tableIndices
     : objectIndex.figureIndices;
@@ -948,7 +998,6 @@ function getIndexedCaptionOrdinal_(
     return getCaptionOrdinalByPreviousCaptions_(paragraph, type);
   }
 
-  const anchorLineIndex = getCaptionCounterAnchorIndex_(type, body);
   if (anchorLineIndex < 0) {
     return objectPosition + 1;
   }
@@ -968,6 +1017,59 @@ function getIndexedCaptionOrdinal_(
     objectPosition -
     anchorObjectPosition
   );
+}
+
+/**
+ * Resolves a Figure counter anchor to its caption line. Usually the NamedRange
+ * already points at "Figure N.". When Set here was pressed on the image
+ * paragraph instead, locate the nearest preceding Figure caption associated
+ * with that same image block.
+ */
+function getFigureAnchorCaptionBodyIndex_(body, anchorLineIndex) {
+  const anchorElement = body.getChild(anchorLineIndex);
+  const anchorType = anchorElement.getType();
+
+  if (
+    anchorType === DocumentApp.ElementType.PARAGRAPH ||
+    anchorType === DocumentApp.ElementType.LIST_ITEM
+  ) {
+    const parsedAnchor = parseCaptionLine_(anchorElement.getText());
+    if (parsedAnchor && parsedAnchor.type === 'Figure') {
+      return anchorLineIndex;
+    }
+  }
+
+  const anchorObjectIndex = findCaptionObjectBodyIndex_(
+    'Figure',
+    body,
+    anchorLineIndex
+  );
+
+  if (anchorObjectIndex < 0) return -1;
+
+  for (let bodyIndex = anchorObjectIndex; bodyIndex >= 0; bodyIndex--) {
+    const element = body.getChild(bodyIndex);
+    const elementType = element.getType();
+
+    if (
+      elementType !== DocumentApp.ElementType.PARAGRAPH &&
+      elementType !== DocumentApp.ElementType.LIST_ITEM
+    ) {
+      continue;
+    }
+
+    const parsed = parseCaptionLine_(element.getText());
+    if (!parsed || parsed.type !== 'Figure') continue;
+
+    if (
+      findCaptionObjectBodyIndex_('Figure', body, bodyIndex) ===
+      anchorObjectIndex
+    ) {
+      return bodyIndex;
+    }
+  }
+
+  return -1;
 }
 
 function findCaptionObjectPosition_(indices, referenceIndex, type) {
