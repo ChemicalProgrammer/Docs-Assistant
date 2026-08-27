@@ -159,8 +159,14 @@ function formatSelectedSection_() {
     objectIndex.equationIndices.forEach(function(bodyIndex, position) {
       if (bodyIndex < firstSelectedEquationIndex) return;
 
+      const equationTable = body.getChild(bodyIndex).asTable();
+      applyEquationTableColumnWidths_(
+        equationTable,
+        body,
+        position + 1
+      );
       const equationResult = formatEquationLabel_(
-        body.getChild(bodyIndex).asTable().getRow(0).getCell(2),
+        equationTable.getRow(0).getCell(2),
         position + 1
       );
 
@@ -620,7 +626,7 @@ function getFigureMarkerMigrationProperty_() {
   } catch (error) {}
 
   return (
-    'DOCS_ASSISTANT_FIGURE_MARKERS_MIGRATED_' +
+    'DOCS_ASSISTANT_FIGURE_MARKERS_MIGRATED_V2_' +
     tabId.replace(/[^A-Za-z0-9_-]/g, '_')
   );
 }
@@ -813,11 +819,10 @@ function getIndexedCaptionOrdinal_(
   const indices = type === 'Table'
     ? objectIndex.tableIndices
     : objectIndex.figureIndices;
-  const preferAfter = type === 'Table';
-  const objectPosition = findNearestIndexPosition_(
+  const objectPosition = findCaptionObjectPosition_(
     indices,
     captionBodyIndex,
-    preferAfter
+    type
   );
 
   if (objectPosition < 0) {
@@ -829,10 +834,10 @@ function getIndexedCaptionOrdinal_(
     return objectPosition + 1;
   }
 
-  const anchorObjectPosition = findNearestIndexPosition_(
+  const anchorObjectPosition = findCaptionObjectPosition_(
     indices,
     anchorLineIndex,
-    preferAfter
+    type
   );
 
   if (anchorObjectPosition < 0 || objectPosition < anchorObjectPosition) {
@@ -844,6 +849,27 @@ function getIndexedCaptionOrdinal_(
     objectPosition -
     anchorObjectPosition
   );
+}
+
+function findCaptionObjectPosition_(indices, referenceIndex, type) {
+  if (!indices || !indices.length) return -1;
+
+  if (type === 'Figure') {
+    // Figure captions conventionally belong to the last image before them.
+    for (let position = indices.length - 1; position >= 0; position--) {
+      if (indices[position] < referenceIndex) return position;
+    }
+
+    // Fallback for documents that intentionally place captions above figures.
+    for (let position = 0; position < indices.length; position++) {
+      if (indices[position] > referenceIndex) return position;
+    }
+    return -1;
+  }
+
+  // Preserve the already-approved Table behavior: nearest table, preferring
+  // the following table only when distances are tied.
+  return findNearestIndexPosition_(indices, referenceIndex, true);
 }
 
 function findNearestIndexPosition_(indices, referenceIndex, preferAfter) {

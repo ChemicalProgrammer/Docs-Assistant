@@ -1254,17 +1254,7 @@ function formatEquationLine() {
   const table = body.insertTable(sourceIndex, [['', '', '']]);
   table.setBorderWidth(0);
 
-  // Symmetric side columns keep the center cell geometrically centered.
-  const usableWidth = Math.max(
-    360,
-    Number(body.getPageWidth()) - Number(body.getMarginLeft()) - Number(body.getMarginRight())
-  );
-  const sideWidth = usableWidth * 0.22;
-  const centerWidth = usableWidth * 0.56;
-
-  table.setColumnWidth(0, sideWidth);
-  table.setColumnWidth(1, centerWidth);
-  table.setColumnWidth(2, sideWidth);
+  applyEquationTableColumnWidths_(table, body, equationNumber);
 
   const row = table.getRow(0);
   row.setMinimumHeight(24);
@@ -1295,7 +1285,7 @@ function formatEquationLine() {
   centerParagraph.setSpacingAfter(0);
 
   // Right: dotted leader + Equation N.
-  const label = '.................... Equation ' + equationNumber;
+  const label = buildEquationLabelText_(equationNumber);
   rightCell.setText(label);
 
   const rightParagraph = rightCell.getChild(0).asParagraph();
@@ -1413,7 +1403,7 @@ function refreshExistingEquationTable_(context) {
  * non-italic. The dotted leader remains regular.
  */
 function formatEquationLabel_(rightCell, equationNumber) {
-  const expected = '.................... Equation ' + equationNumber;
+  const expected = buildEquationLabelText_(equationNumber);
   const current = String(rightCell.getText() || '').trim();
   const numberCorrected = current !== expected;
   const paragraph = rightCell.getChild(0).asParagraph();
@@ -1435,7 +1425,7 @@ function formatEquationLabel_(rightCell, equationNumber) {
   text.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
   resetTextColorToAutomatic_(text);
 
-  const boldLabel = 'Equation ' + equationNumber;
+  const boldLabel = buildEquationBoldLabelText_(equationNumber);
   const labelStart = expected.indexOf(boldLabel);
 
   if (labelStart >= 0) {
@@ -1444,6 +1434,17 @@ function formatEquationLabel_(rightCell, equationNumber) {
   }
 
   return {numberCorrected: numberCorrected};
+}
+
+function buildEquationLabelText_(equationNumber) {
+  return '.................... ' +
+    buildEquationBoldLabelText_(equationNumber);
+}
+
+function buildEquationBoldLabelText_(equationNumber) {
+  // A non-breaking space looks identical but prevents the number from being
+  // orphaned on a second line in Google Docs.
+  return 'Equation\u00A0' + equationNumber;
 }
 
 /**
@@ -1471,7 +1472,9 @@ function renumberEquationTablesFromBodyIndex_(
     const element = body.getChild(bodyIndex);
     if (!hasEquationLayoutStructure_(element.asTable())) return;
 
-    formatEquationLabel_(element.asTable().getRow(0).getCell(2), equationNumber);
+    const table = element.asTable();
+    applyEquationTableColumnWidths_(table, body, equationNumber);
+    formatEquationLabel_(table.getRow(0).getCell(2), equationNumber);
     renumbered++;
   });
 
@@ -1481,6 +1484,59 @@ function renumberEquationTablesFromBodyIndex_(
     equationsIndexed: objectIndex.equationIndices.length,
     equationMarkersRecovered: objectIndex.markersRecovered,
     equationIndexMs: objectIndex.elapsedMs
+  };
+}
+
+/**
+ * Reserves enough room for the full dotted "Equation N" label without
+ * sacrificing geometric centering. Both side columns always receive the same
+ * width; the middle column remains centered on the page.
+ */
+function applyEquationTableColumnWidths_(table, body, equationNumber) {
+  const calculatedWidth =
+    Number(body.getPageWidth()) -
+    Number(body.getMarginLeft()) -
+    Number(body.getMarginRight());
+  const usableWidth =
+    Number.isFinite(calculatedWidth) && calculatedWidth > 0
+      ? calculatedWidth
+      : 468;
+  const digitCount = String(Math.abs(Number(equationNumber) || 0)).length;
+
+  // 132 pt safely accommodates the 20-dot leader plus "Equation 999" at
+  // Arial 9. Add a little room only if the counter grows beyond three digits.
+  const labelMinimumWidth =
+    132 + Math.max(0, digitCount - 3) * 6;
+  const preferredSideWidth = Math.max(
+    labelMinimumWidth,
+    usableWidth * 0.28
+  );
+  const minimumCenterWidth = Math.max(
+    144,
+    usableWidth * 0.38
+  );
+  const maximumSideWidth = Math.max(
+    72,
+    (usableWidth - minimumCenterWidth) / 2
+  );
+  const sideWidth = Math.min(
+    preferredSideWidth,
+    maximumSideWidth
+  );
+  const centerWidth = Math.max(
+    72,
+    usableWidth - sideWidth * 2
+  );
+
+  table.setColumnWidth(0, sideWidth);
+  table.setColumnWidth(1, centerWidth);
+  table.setColumnWidth(2, sideWidth);
+
+  return {
+    usableWidth: usableWidth,
+    sideWidth: sideWidth,
+    centerWidth: centerWidth,
+    digitCount: digitCount
   };
 }
 
@@ -1942,6 +1998,11 @@ function formatCaptionLine(captionType) {
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
     throw new Error('Captions cannot be list items.');
   }
+  if (forcedType === 'Figure' && isStandaloneFigureBlock_(p)) {
+    throw new Error(
+      'Place the cursor in a separate caption line below the image. The image paragraph will not be modified.'
+    );
+  }
 
   const original = p.getText();
 
@@ -1966,6 +2027,7 @@ function formatCaptionLine(captionType) {
     text: p.getText(),
     followingCaptionsRenumbered:
       renumberResult.followingCaptionsRenumbered,
+    positionPreserved: renumberResult.positionPreserved,
     elapsedMs: renumberResult.elapsedMs
   };
 }
@@ -2034,9 +2096,14 @@ function formatCaptionAndFollowing_(targetParagraph, type, description) {
     followingCaptionsRenumbered++;
   }
 
+  const finalTargetIndex = body.getChildIndex(targetParagraph);
+
   return {
     number: number,
     followingCaptionsRenumbered: followingCaptionsRenumbered,
+    positionPreserved: finalTargetIndex === targetIndex,
+    originalBodyIndex: targetIndex,
+    finalBodyIndex: finalTargetIndex,
     elapsedMs: Date.now() - started
   };
 }
@@ -2207,6 +2274,9 @@ function formatCaptionParagraph_(p, type, description, number) {
     throw new Error('Caption formatting is not allowed inside a table.');
   }
   const captionText = type + ' ' + number + '. ' + String(description || '').trim();
+  const verticalLayout = type === 'Figure'
+    ? captureCaptionVerticalLayout_(p)
+    : null;
 
   // Start from CURRENT Normal text style, then apply caption overrides.
   applyNamedStyleToParagraph_(p, 'NORMAL');
@@ -2227,6 +2297,36 @@ function formatCaptionParagraph_(p, type, description, number) {
   }
 
   p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+  restoreCaptionVerticalLayout_(p, verticalLayout);
+}
+
+/**
+ * Caption formatting must not change the paragraph's vertical placement
+ * relative to its image/table. Named Style reapplication can otherwise alter
+ * spacing and create the impression that the caption moved.
+ */
+function captureCaptionVerticalLayout_(paragraph) {
+  const layout = {};
+
+  try { layout.spacingBefore = paragraph.getSpacingBefore(); } catch (error) {}
+  try { layout.spacingAfter = paragraph.getSpacingAfter(); } catch (error) {}
+  try { layout.lineSpacing = paragraph.getLineSpacing(); } catch (error) {}
+
+  return layout;
+}
+
+function restoreCaptionVerticalLayout_(paragraph, layout) {
+  if (!layout) return;
+
+  if (Number.isFinite(layout.spacingBefore)) {
+    paragraph.setSpacingBefore(layout.spacingBefore);
+  }
+  if (Number.isFinite(layout.spacingAfter)) {
+    paragraph.setSpacingAfter(layout.spacingAfter);
+  }
+  if (Number.isFinite(layout.lineSpacing) && layout.lineSpacing > 0) {
+    paragraph.setLineSpacing(layout.lineSpacing);
+  }
 }
 
 function getCaptionOrdinal_(targetParagraph, type) {
