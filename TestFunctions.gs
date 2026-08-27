@@ -9,13 +9,21 @@ function runCurrentTest() {
   const doc = DocumentApp.getActiveDocument();
   const body = getActiveBody_();
   const targets = getStyleTargetParagraphs_();
-  const activeTable = getActiveTable_();
+  const activeTableContext = getActiveEquationTableContext_();
+  const activeTable = activeTableContext
+    ? activeTableContext.table
+    : getActiveTable_();
 
   const report = {
     ok: true,
-    testId: 'FORMATTING-COMPLIANCE-V6',
+    testId: 'FORMATTING-COMPLIANCE-V6.1',
     visibleContentMutations: false,
     mayCreateInternalIndexMarkers: true,
+    equationRowUpdateMode: {
+      supported: true,
+      behavior:
+        'Format Equation Row updates the active equation and every later equation.'
+    },
     automaticTextColor: {
       policy: 'FOREGROUND_COLOR = null',
       hardCodedBlackText: false,
@@ -94,8 +102,12 @@ function auditSelectedCaption_(paragraphs) {
 function auditActiveTable_(table, body, doc) {
   const top = getTopLevelElementForParent_(table, body);
   const bodyIndex = top ? body.getChildIndex(top) : -1;
+  const equationMarkers = readEquationMarkerIndices_(body);
 
-  if (isEquationLayoutTable_(table)) {
+  if (
+    isEquationLayoutTable_(table) ||
+    Boolean(equationMarkers[bodyIndex])
+  ) {
     return auditEquationTable_(table, bodyIndex);
   }
 

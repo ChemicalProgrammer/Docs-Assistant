@@ -372,9 +372,10 @@ function formatEquation(e){
    .withSuccessHandler(r=>{
      const n=r&&r.equationNumber?r.equationNumber:'';
      const following=r&&r.followingEquationsRenumbered?r.followingEquationsRenumbered:0;
+     const action=r&&r.mode==='UPDATED'?'updated':'formatted';
      endTask(
        true,
-       n?`Equation ${n} formatted · ${following} following renumbered`:'Equation formatted',
+       n?`Equation ${n} ${action} · ${following} following renumbered`:`Equation ${action}`,
        true
      );
    })

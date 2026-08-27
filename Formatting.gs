@@ -1198,6 +1198,28 @@ function getStyleTargetParagraphs_() {
 }
 
 function formatEquationLine() {
+  const existingEquation = getActiveEquationTableContext_();
+
+  if (existingEquation) {
+    const equationMarkers = readEquationMarkerIndices_(
+      existingEquation.body
+    );
+    const isKnownEquation =
+      isEquationLayoutTable_(existingEquation.table) ||
+      Boolean(equationMarkers[existingEquation.bodyIndex]);
+
+    if (
+      !isKnownEquation ||
+      !hasEquationLayoutStructure_(existingEquation.table)
+    ) {
+      throw new Error(
+        'The selected table is not an equation row created by Docs Assistant.'
+      );
+    }
+
+    return refreshExistingEquationTable_(existingEquation);
+  }
+
   const targets = getStyleTargetParagraphs_();
 
   if (targets.length !== 1) {
@@ -1288,19 +1310,92 @@ function formatEquationLine() {
 
   sourceParagraph.removeFromParent();
 
-  // The marker makes this new auxiliary table immediately available to the
-  // fast document index even when the one-time migration already ran.
-  addEquationTableMarker_(table);
-
   const renumberResult = renumberEquationTablesFromBodyIndex_(
     body,
-    sourceIndex
+    sourceIndex,
+    [{bodyIndex: sourceIndex, element: table}]
   );
 
   return {
     ok: true,
+    mode: 'CREATED',
     equationNumber:
       renumberResult.numberByBodyIndex[sourceIndex] || equationNumber,
+    equationsRenumbered: renumberResult.renumbered,
+    followingEquationsRenumbered:
+      Math.max(0, renumberResult.renumbered - 1)
+  };
+}
+
+/**
+ * Returns the one body-level table targeted entirely by the current cursor or
+ * selection. Body indices are compared instead of Apps Script wrapper object
+ * identity so selecting several cells in the same equation remains reliable.
+ */
+function getActiveEquationTableContext_() {
+  const doc = DocumentApp.getActiveDocument();
+  const body = getActiveBody_();
+  const selection = doc.getSelection();
+  const elements = [];
+
+  if (selection) {
+    const ranges = selection.getRangeElements();
+    for (let index = 0; index < ranges.length; index++) {
+      elements.push(ranges[index].getElement());
+    }
+  } else {
+    const cursor = doc.getCursor();
+    if (cursor) elements.push(cursor.getElement());
+  }
+
+  if (!elements.length) return null;
+
+  let activeBodyIndex = null;
+
+  for (let index = 0; index < elements.length; index++) {
+    const table = findAncestorTable_(elements[index]);
+    if (!table) return null;
+
+    const top = getTopLevelElementForParent_(table, body);
+    if (!top || top.getType() !== DocumentApp.ElementType.TABLE) return null;
+
+    const bodyIndex = body.getChildIndex(top);
+
+    if (activeBodyIndex === null) {
+      activeBodyIndex = bodyIndex;
+    } else if (bodyIndex !== activeBodyIndex) {
+      return null;
+    }
+  }
+
+  return {
+    body: body,
+    bodyIndex: activeBodyIndex,
+    table: body.getChild(activeBodyIndex).asTable()
+  };
+}
+
+/**
+ * Updates an existing equation row in place and renumbers it together with
+ * every later equation. No layout table is recreated.
+ */
+function refreshExistingEquationTable_(context) {
+  const renumberResult = renumberEquationTablesFromBodyIndex_(
+    context.body,
+    context.bodyIndex,
+    [{bodyIndex: context.bodyIndex, element: context.table}]
+  );
+  const equationNumber =
+    renumberResult.numberByBodyIndex[context.bodyIndex];
+
+  if (!equationNumber) {
+    throw new Error('The equation row could not be added to the document index.');
+  }
+
+  return {
+    ok: true,
+    mode: 'UPDATED',
+    equationNumber: equationNumber,
     equationsRenumbered: renumberResult.renumbered,
     followingEquationsRenumbered:
       Math.max(0, renumberResult.renumbered - 1)
@@ -1347,7 +1442,11 @@ function formatEquationLabel_(rightCell, equationNumber) {
  * Reindexes equation layout tables once and updates only the new equation and
  * the equations that follow it.
  */
-function renumberEquationTablesFromBodyIndex_(body, firstBodyIndex) {
+function renumberEquationTablesFromBodyIndex_(
+  body,
+  firstBodyIndex,
+  selectedEquationEntries
+) {
   const objectIndex = buildNeededDocumentIndex_(
     body,
     {
@@ -1355,7 +1454,7 @@ function renumberEquationTablesFromBodyIndex_(body, firstBodyIndex) {
       figureIndex: false,
       equationIndex: true
     },
-    []
+    selectedEquationEntries || []
   );
   const numberByBodyIndex = {};
   let renumbered = 0;
@@ -1367,7 +1466,7 @@ function renumberEquationTablesFromBodyIndex_(body, firstBodyIndex) {
     if (bodyIndex < firstBodyIndex) return;
 
     const element = body.getChild(bodyIndex);
-    if (!isEquationLayoutTable_(element.asTable())) return;
+    if (!hasEquationLayoutStructure_(element.asTable())) return;
 
     formatEquationLabel_(element.asTable().getRow(0).getCell(2), equationNumber);
     renumbered++;
@@ -1428,6 +1527,25 @@ function getNextEquationNumberBeforeIndex_(body, targetIndex) {
  */
 function isEquationLayoutTable_(table) {
   try {
+    if (!hasEquationLayoutStructure_(table)) return false;
+
+    const row = table.getRow(0);
+    const rightText = String(row.getCell(2).getText() || '')
+      .replace(/\u00A0/g, ' ')
+      .trim();
+
+    return /^\.{10,}\s*Equation\s+\d+\s*$/i.test(rightText);
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
+ * Checks the stable physical shape of an equation row independently of its
+ * label. This lets a persistent marker repair a missing or damaged number.
+ */
+function hasEquationLayoutStructure_(table) {
+  try {
     if (!table || table.getNumRows() !== 1) return false;
 
     const row = table.getRow(0);
@@ -1436,14 +1554,8 @@ function isEquationLayoutTable_(table) {
     const leftText = String(row.getCell(0).getText() || '')
       .replace(/\u00A0/g, ' ')
       .trim();
-    const rightText = String(row.getCell(2).getText() || '')
-      .replace(/\u00A0/g, ' ')
-      .trim();
 
-    return (
-      leftText === '' &&
-      /^\.{10,}\s*Equation\s+\d+\s*$/i.test(rightText)
-    );
+    return leftText === '';
   } catch (error) {
     return false;
   }
