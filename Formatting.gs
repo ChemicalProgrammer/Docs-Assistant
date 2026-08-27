@@ -1322,6 +1322,9 @@ function formatEquationLine() {
     equationNumber:
       renumberResult.numberByBodyIndex[sourceIndex] || equationNumber,
     equationsRenumbered: renumberResult.renumbered,
+    equationsIndexed: renumberResult.equationsIndexed,
+    equationMarkersRecovered: renumberResult.equationMarkersRecovered,
+    equationIndexMs: renumberResult.equationIndexMs,
     followingEquationsRenumbered:
       Math.max(0, renumberResult.renumbered - 1)
   };
@@ -1397,6 +1400,9 @@ function refreshExistingEquationTable_(context) {
     mode: 'UPDATED',
     equationNumber: equationNumber,
     equationsRenumbered: renumberResult.renumbered,
+    equationsIndexed: renumberResult.equationsIndexed,
+    equationMarkersRecovered: renumberResult.equationMarkersRecovered,
+    equationIndexMs: renumberResult.equationIndexMs,
     followingEquationsRenumbered:
       Math.max(0, renumberResult.renumbered - 1)
   };
@@ -1410,12 +1416,15 @@ function formatEquationLabel_(rightCell, equationNumber) {
   const expected = '.................... Equation ' + equationNumber;
   const current = String(rightCell.getText() || '').trim();
   const numberCorrected = current !== expected;
+  const paragraph = rightCell.getChild(0).asParagraph();
+  const text = paragraph.editAsText();
 
   if (numberCorrected) {
-    rightCell.setText(expected);
+    // Keep the existing paragraph object. TableCell.setText() may replace the
+    // paragraph and invalidate the NamedRange used as the equation marker.
+    text.setText(expected);
   }
 
-  const paragraph = rightCell.getChild(0).asParagraph();
   paragraph.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
   paragraph.setIndentStart(0);
   paragraph.setIndentEnd(0);
@@ -1423,7 +1432,6 @@ function formatEquationLabel_(rightCell, equationNumber) {
   paragraph.setSpacingBefore(0);
   paragraph.setSpacingAfter(0);
 
-  const text = paragraph.editAsText();
   text.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
   resetTextColorToAutomatic_(text);
 
@@ -1439,21 +1447,16 @@ function formatEquationLabel_(rightCell, equationNumber) {
 }
 
 /**
- * Reindexes equation layout tables once and updates only the new equation and
- * the equations that follow it.
+ * Rebuilds the complete equation index from the direct table collection and
+ * updates only the selected/new equation and the equations that follow it.
  */
 function renumberEquationTablesFromBodyIndex_(
   body,
   firstBodyIndex,
   selectedEquationEntries
 ) {
-  const objectIndex = buildNeededDocumentIndex_(
+  const objectIndex = buildCompleteEquationIndex_(
     body,
-    {
-      tableIndex: false,
-      figureIndex: false,
-      equationIndex: true
-    },
     selectedEquationEntries || []
   );
   const numberByBodyIndex = {};
@@ -1474,8 +1477,89 @@ function renumberEquationTablesFromBodyIndex_(
 
   return {
     renumbered: renumbered,
-    numberByBodyIndex: numberByBodyIndex
+    numberByBodyIndex: numberByBodyIndex,
+    equationsIndexed: objectIndex.equationIndices.length,
+    equationMarkersRecovered: objectIndex.markersRecovered,
+    equationIndexMs: objectIndex.elapsedMs
   };
+}
+
+/**
+ * Discovers every body-level equation table on each equation-button run.
+ * Valid labels are sufficient for discovery; existing markers also allow a
+ * damaged label to be repaired. Missing markers are restored for later fast
+ * section-formatting runs.
+ */
+function buildCompleteEquationIndex_(body, selectedEquationEntries) {
+  const started = Date.now();
+  const markerIndexSet = readEquationMarkerIndices_(body);
+  const selectedIndexSet = {};
+  let markersRecovered = 0;
+
+  (selectedEquationEntries || []).forEach(function(entry) {
+    selectedIndexSet[entry.bodyIndex] = true;
+  });
+
+  const equationIndices = [];
+
+  getTopLevelTableEntries_(body).forEach(function(entry) {
+    const structurallyValid = hasEquationLayoutStructure_(entry.table);
+    const recognized = structurallyValid && (
+      isEquationLayoutTable_(entry.table) ||
+      Boolean(markerIndexSet[entry.bodyIndex]) ||
+      Boolean(selectedIndexSet[entry.bodyIndex])
+    );
+
+    if (!recognized) return;
+
+    equationIndices.push(entry.bodyIndex);
+
+    if (!markerIndexSet[entry.bodyIndex]) {
+      try {
+        addEquationTableMarker_(entry.table);
+        markerIndexSet[entry.bodyIndex] = true;
+        markersRecovered++;
+      } catch (error) {}
+    }
+  });
+
+  equationIndices.sort(function(a, b) { return a - b; });
+
+  return {
+    equationIndices: equationIndices,
+    markersRecovered: markersRecovered,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Returns each unique body-level physical table without walking every body
+ * child. Nested tables are collapsed into their top-level physical table.
+ */
+function getTopLevelTableEntries_(body) {
+  const entries = [];
+  const seenBodyIndices = {};
+  const tables = body.getTables() || [];
+
+  tables.forEach(function(table) {
+    const top = getTopLevelElementForParent_(table, body);
+    if (!top || top.getType() !== DocumentApp.ElementType.TABLE) return;
+
+    const bodyIndex = body.getChildIndex(top);
+    if (seenBodyIndices[bodyIndex]) return;
+
+    seenBodyIndices[bodyIndex] = true;
+    entries.push({
+      bodyIndex: bodyIndex,
+      table: top.asTable()
+    });
+  });
+
+  entries.sort(function(a, b) {
+    return a.bodyIndex - b.bodyIndex;
+  });
+
+  return entries;
 }
 
 function removeEmptyCellParagraphsExcept_(cell, keepParagraph) {

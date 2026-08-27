@@ -472,21 +472,14 @@ function ensureEquationTableMarkers_(body, selectedEquationEntries) {
   if (!migrationAlreadyDone) {
     migrationPerformed = true;
 
-    for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
-      const element = body.getChild(bodyIndex);
+    getTopLevelTableEntries_(body).forEach(function(entry) {
+      if (markerIndexSet[entry.bodyIndex]) return;
 
-      if (
-        element.getType() !== DocumentApp.ElementType.TABLE ||
-        markerIndexSet[bodyIndex]
-      ) {
-        continue;
+      if (isEquationLayoutTable_(entry.table)) {
+        addEquationTableMarker_(entry.table);
+        markerIndexSet[entry.bodyIndex] = true;
       }
-
-      if (isEquationLayoutTable_(element.asTable())) {
-        addEquationTableMarker_(element.asTable());
-        markerIndexSet[bodyIndex] = true;
-      }
-    }
+    });
 
     if (properties) {
       properties.setProperty(migrationProperty, '1');
@@ -538,7 +531,7 @@ function getEquationMarkerMigrationProperty_() {
   } catch (error) {}
 
   return (
-    'DOCS_ASSISTANT_EQUATION_MARKERS_MIGRATED_' +
+    'DOCS_ASSISTANT_EQUATION_MARKERS_MIGRATED_V2_' +
     tabId.replace(/[^A-Za-z0-9_-]/g, '_')
   );
 }

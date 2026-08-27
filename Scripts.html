@@ -372,10 +372,16 @@ function formatEquation(e){
    .withSuccessHandler(r=>{
      const n=r&&r.equationNumber?r.equationNumber:'';
      const following=r&&r.followingEquationsRenumbered?r.followingEquationsRenumbered:0;
+     const indexed=r&&r.equationsIndexed?r.equationsIndexed:0;
      const action=r&&r.mode==='UPDATED'?'updated':'formatted';
+     const parts=[
+       n?`Equation ${n} ${action}`:`Equation ${action}`,
+       `${following} following renumbered`
+     ];
+     if(indexed)parts.push(`${indexed} equations indexed`);
      endTask(
        true,
-       n?`Equation ${n} ${action} · ${following} following renumbered`:`Equation ${action}`,
+       parts.join(' · '),
        true
      );
    })

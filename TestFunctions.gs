@@ -1,5 +1,5 @@
 /**
- * TEST LAB V6
+ * TEST LAB V6.2
  *
  * Non-destructive audit for the production formatting rules. Place the cursor
  * in a caption, equation table, real table, or select list paragraphs.
@@ -16,7 +16,7 @@ function runCurrentTest() {
 
   const report = {
     ok: true,
-    testId: 'FORMATTING-COMPLIANCE-V6.1',
+    testId: 'FORMATTING-COMPLIANCE-V6.2',
     visibleContentMutations: false,
     mayCreateInternalIndexMarkers: true,
     equationRowUpdateMode: {
