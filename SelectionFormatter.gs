@@ -31,7 +31,7 @@ function formatSelectedSection_() {
 
   const report = {
     ok: true,
-    engineId: 'DETERMINISTIC-SECTION-FORMAT-V6',
+    engineId: 'DETERMINISTIC-SECTION-FORMAT-V6.7',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -224,12 +224,15 @@ function formatSelectedSection_() {
   report.documentRealTables = objectIndex.tableIndices.length;
   report.documentEquationTables = objectIndex.equationIndices.length;
   report.documentFigures = objectIndex.figureIndices.length;
+  report.documentInlineImages = objectIndex.figureImageCollectionCount;
+  report.documentDirectInlineFigureBlocks =
+    objectIndex.figureDirectBlockCount;
   report.equationMarkerMigrationPerformed =
     objectIndex.markerMigrationPerformed;
   report.equationMarkerCount = objectIndex.equationIndices.length;
   report.figureMarkerMigrationPerformed =
     objectIndex.figureMarkerMigrationPerformed;
-  report.figureMarkerCount = objectIndex.figureIndices.length;
+  report.figureMarkerCount = objectIndex.figurePersistentMarkerCount;
   report.selectionAnalysisMs = selectionAnalysisMs;
   report.equationMarkerMigrationMs = objectIndex.markerMigrationMs;
   report.figureMarkerMigrationMs = objectIndex.figureMarkerMigrationMs;
@@ -360,6 +363,9 @@ function buildNeededDocumentIndex_(
   let markerMigrationMs = 0;
   let figureMarkerMigrationPerformed = false;
   let figureMarkerMigrationMs = 0;
+  let figureImageCollectionCount = null;
+  let figureDirectBlockCount = null;
+  let figurePersistentMarkerCount = null;
   let tableIndexMs = 0;
   let figureIndexMs = 0;
 
@@ -421,6 +427,12 @@ function buildNeededDocumentIndex_(
     figureMarkerMigrationPerformed =
       figureMarkerResult.migrationPerformed;
     figureMarkerMigrationMs = figureMarkerResult.elapsedMs;
+    figureImageCollectionCount =
+      figureMarkerResult.imageCollectionCount;
+    figureDirectBlockCount =
+      figureMarkerResult.directBlockCount;
+    figurePersistentMarkerCount =
+      figureMarkerResult.persistentMarkerCount;
 
     Object.keys(figureMarkerResult.markerIndexSet)
       .map(Number)
@@ -443,6 +455,9 @@ function buildNeededDocumentIndex_(
     markerMigrationMs: markerMigrationMs,
     figureMarkerMigrationPerformed: figureMarkerMigrationPerformed,
     figureMarkerMigrationMs: figureMarkerMigrationMs,
+    figureImageCollectionCount: figureImageCollectionCount,
+    figureDirectBlockCount: figureDirectBlockCount,
+    figurePersistentMarkerCount: figurePersistentMarkerCount,
     tableIndexMs: tableIndexMs,
     figureIndexMs: figureIndexMs
   };
@@ -553,6 +568,11 @@ const SECTION_FIGURE_MARKER_NAME_ =
 function ensureFigureBlockMarkers_(body) {
   const started = Date.now();
   const markerIndexSet = readFigureMarkerIndices_(body);
+  let persistentMarkerCount = Object.keys(markerIndexSet).length;
+  const directResult = mergeDirectInlineFigureIndices_(
+    body,
+    markerIndexSet
+  );
   const migrationProperty = getFigureMarkerMigrationProperty_();
   const properties = PropertiesService.getDocumentProperties();
   const migrationAlreadyDone = properties &&
@@ -570,6 +590,7 @@ function ensureFigureBlockMarkers_(body) {
 
       addActiveTabNamedRange_(SECTION_FIGURE_MARKER_NAME_, element);
       markerIndexSet[bodyIndex] = true;
+      persistentMarkerCount++;
     }
 
     if (properties) {
@@ -580,8 +601,106 @@ function ensureFigureBlockMarkers_(body) {
   return {
     markerIndexSet: markerIndexSet,
     migrationPerformed: migrationPerformed,
+    imageCollectionCount: directResult.imageCollectionCount,
+    directBlockCount: directResult.directBlockCount,
+    persistentMarkerCount: persistentMarkerCount,
     elapsedMs: Date.now() - started
   };
+}
+
+/**
+ * Adds every current body-level InlineImage to the Figure index.
+ *
+ * Unlike the one-time marker migration, Body.getImages() reflects images
+ * inserted after the migration. It also avoids reopening every paragraph in
+ * a large document. Images inside tables are excluded because their top-level
+ * element is a TABLE, not a standalone figure paragraph.
+ */
+function mergeDirectInlineFigureIndices_(body, indexSet) {
+  const targetIndexSet = indexSet || {};
+  const directBlockSet = {};
+  let images = [];
+
+  try {
+    images = body.getImages() || [];
+  } catch (error) {
+    images = [];
+  }
+
+  images.forEach(function(image) {
+    const top = getTopLevelElementForParent_(image, body);
+    if (!top || !isStandaloneFigureBlock_(top)) return;
+
+    const bodyIndex = body.getChildIndex(top);
+    targetIndexSet[bodyIndex] = true;
+    directBlockSet[bodyIndex] = true;
+  });
+
+  return {
+    imageCollectionCount: images.length,
+    directBlockCount: Object.keys(directBlockSet).length
+  };
+}
+
+/**
+ * Persists a marker for a positioned image or drawing discovered locally at
+ * the active Figure anchor. Inline images are also accepted, but their direct
+ * Body collection already guarantees that they participate in every index.
+ */
+function ensurePersistentFigureBlockMarker_(body, element) {
+  const top = getTopLevelElementForParent_(element, body);
+
+  if (!top || !isStandaloneFigureBlock_(top)) {
+    return {
+      bodyIndex: -1,
+      markerAdded: false
+    };
+  }
+
+  const bodyIndex = body.getChildIndex(top);
+
+  // Body.getImages() already refreshes ordinary InlineImages on every index
+  // build, including images inserted after the original marker migration.
+  // Avoid a second NamedRange read for this common and fast path.
+  if (figureBlockContainsInlineImage_(top)) {
+    return {
+      bodyIndex: bodyIndex,
+      markerAdded: false,
+      coveredByDirectCollection: true
+    };
+  }
+
+  const existing = readFigureMarkerIndices_(body);
+
+  if (!existing[bodyIndex]) {
+    addActiveTabNamedRange_(SECTION_FIGURE_MARKER_NAME_, top);
+    return {
+      bodyIndex: bodyIndex,
+      markerAdded: true,
+      coveredByDirectCollection: false
+    };
+  }
+
+  return {
+    bodyIndex: bodyIndex,
+    markerAdded: false,
+    coveredByDirectCollection: false
+  };
+}
+
+function figureBlockContainsInlineImage_(element) {
+  try {
+    for (let index = 0; index < element.getNumChildren(); index++) {
+      if (
+        element.getChild(index).getType() ===
+        DocumentApp.ElementType.INLINE_IMAGE
+      ) {
+        return true;
+      }
+    }
+  } catch (error) {}
+
+  return false;
 }
 
 function readFigureMarkerIndices_(body) {
@@ -868,35 +987,16 @@ function findCaptionObjectPosition_(indices, referenceIndex, type) {
     return -1;
   }
 
-  // Preserve the already-approved Table behavior: nearest table, preferring
-  // the following table only when distances are tied.
-  return findNearestIndexPosition_(indices, referenceIndex, true);
-}
-
-function findNearestIndexPosition_(indices, referenceIndex, preferAfter) {
-  let bestPosition = -1;
-  let bestDistance = Number.MAX_SAFE_INTEGER;
-
+  // Table captions belong to the first table at or after the caption. Equality
+  // supports an anchor set directly from inside the table.
   for (let position = 0; position < indices.length; position++) {
-    const objectIndex = indices[position];
-    const distance = Math.abs(objectIndex - referenceIndex);
-    const preferredTie = preferAfter
-      ? objectIndex > referenceIndex
-      : objectIndex < referenceIndex;
-    const currentBestPreferred = bestPosition >= 0 && (
-      preferAfter
-        ? indices[bestPosition] > referenceIndex
-        : indices[bestPosition] < referenceIndex
-    );
-
-    if (
-      distance < bestDistance ||
-      (distance === bestDistance && preferredTie && !currentBestPreferred)
-    ) {
-      bestPosition = position;
-      bestDistance = distance;
-    }
+    if (indices[position] >= referenceIndex) return position;
   }
 
-  return bestPosition;
+  // Fallback for legacy captions that remain below their table.
+  for (let position = indices.length - 1; position >= 0; position--) {
+    if (indices[position] < referenceIndex) return position;
+  }
+
+  return -1;
 }

@@ -307,9 +307,15 @@ function formatCaption(type,e){
      r=r||{};
      const label=type==='figure'?'Figure':'Table';
      const following=r.followingCaptionsRenumbered||0;
+     const indexed=r.objectsIndexed||0;
+     const parts=[
+       `${label} ${r.number||''} formatted`,
+       `${following} following renumbered`
+     ];
+     if(indexed)parts.push(`${indexed} ${type==='table'?'tables':'figures'} indexed`);
      endTask(
        true,
-       `${label} ${r.number||''} formatted · ${following} following renumbered`
+       parts.join(' · ')
      );
    })
    .withFailureHandler(fail)
