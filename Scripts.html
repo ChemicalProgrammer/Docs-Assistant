@@ -301,7 +301,19 @@ function formatNote(e){
  runServer(e.currentTarget,'…','formatNoteLine',[],'Note formatted');
 }
 function formatCaption(type,e){
- runServer(e.currentTarget,'…','formatCaptionLine',[type],type === 'figure' ? 'Figure caption formatted' : 'Table caption formatted');
+ if(!beginTask(e.currentTarget,'Formatting…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     r=r||{};
+     const label=type==='figure'?'Figure':'Table';
+     const following=r.followingCaptionsRenumbered||0;
+     endTask(
+       true,
+       `${label} ${r.number||''} formatted · ${following} following renumbered`
+     );
+   })
+   .withFailureHandler(fail)
+   .formatCaptionLine(type);
 }
 function setCaptionAnchor(type,e){
  const input=document.getElementById(type==='table'?'tableCounterStart':'figureCounterStart');
@@ -335,20 +347,36 @@ function renumberCaptions(e){
      parts.push(`${r.tables||0} tables`);
      parts.push(`${r.figures||0} figures`);
      if(r.skippedBeforeAnchor)parts.push(`${r.skippedBeforeAnchor} before anchor unchanged`);
+     if(r.elapsedMs)parts.push(`${r.elapsedMs} ms`);
      endTask(true,'Renumbered · '+parts.join(' · '));
    })
    .withFailureHandler(fail)
    .renumberAllCaptions();
 }
 function formatTable(e){
- runServer(e.currentTarget,'Formatting…','formatSelectedTable',[],'Table formatted');
+ if(!beginTask(e.currentTarget,'Formatting…'))return;
+ google.script.run
+   .withSuccessHandler(r=>{
+     r=r||{};
+     endTask(
+       true,
+       `Table formatted · first row pinned · ${r.cells||0} cells`
+     );
+   })
+   .withFailureHandler(fail)
+   .formatSelectedTable();
 }
 function formatEquation(e){
  if(!beginTask(e.currentTarget,'Formatting…'))return;
  google.script.run
    .withSuccessHandler(r=>{
      const n=r&&r.equationNumber?r.equationNumber:'';
-     endTask(true,n?`Equation ${n} formatted`:'Equation formatted',true);
+     const following=r&&r.followingEquationsRenumbered?r.followingEquationsRenumbered:0;
+     endTask(
+       true,
+       n?`Equation ${n} formatted · ${following} following renumbered`:'Equation formatted',
+       true
+     );
    })
    .withFailureHandler(fail)
    .formatEquationLine();

@@ -28,7 +28,25 @@ function applyStyleToParagraph_(
 
   paragraph.setHeading(targetHeading);
 
+  resetTextColorToAutomatic_(
+    paragraph.editAsText()
+  );
+
   return paragraph;
+}
+
+/**
+ * Removes a direct foreground-color override so Google Docs can use the
+ * inherited/Automatic text color. This intentionally does not force #000000.
+ */
+function resetTextColorToAutomatic_(textElement) {
+  if (!textElement) return textElement;
+
+  const attributes = {};
+  attributes[DocumentApp.Attribute.FOREGROUND_COLOR] = null;
+  textElement.setAttributes(attributes);
+
+  return textElement;
 }
 
 /**
@@ -884,9 +902,12 @@ function uiListFormatItem_(listItem, glyphType) {
     .setGlyphType(glyphType)
     .setNestingLevel(0)
     .setHeading(DocumentApp.ParagraphHeading.NORMAL)
+    .setLineSpacing(1.5)
     .setIndentStart(36)
     .setIndentFirstLine(18)
     .setIndentEnd(0);
+
+  resetTextColorToAutomatic_(listItem.editAsText());
 }
 
 function uiListConvertParagraph_(body, paragraph) {
@@ -1263,20 +1284,98 @@ function formatEquationLine() {
   rightParagraph.setSpacingBefore(0);
   rightParagraph.setSpacingAfter(0);
 
-  const rightText = rightParagraph.editAsText();
-  rightText.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
-
-  const labelStart = label.indexOf('Equation ');
-  if (labelStart >= 0) {
-    rightText.setBold(labelStart, label.length - 1, true);
-    rightText.setItalic(labelStart, label.length - 1, true);
-  }
+  formatEquationLabel_(rightCell, equationNumber);
 
   sourceParagraph.removeFromParent();
 
+  // The marker makes this new auxiliary table immediately available to the
+  // fast document index even when the one-time migration already ran.
+  addEquationTableMarker_(table);
+
+  const renumberResult = renumberEquationTablesFromBodyIndex_(
+    body,
+    sourceIndex
+  );
+
   return {
     ok: true,
-    equationNumber: equationNumber
+    equationNumber:
+      renumberResult.numberByBodyIndex[sourceIndex] || equationNumber,
+    equationsRenumbered: renumberResult.renumbered,
+    followingEquationsRenumbered:
+      Math.max(0, renumberResult.renumbered - 1)
+  };
+}
+
+/**
+ * Applies one continuous bold run to "Equation N" and explicitly keeps it
+ * non-italic. The dotted leader remains regular.
+ */
+function formatEquationLabel_(rightCell, equationNumber) {
+  const expected = '.................... Equation ' + equationNumber;
+  const current = String(rightCell.getText() || '').trim();
+  const numberCorrected = current !== expected;
+
+  if (numberCorrected) {
+    rightCell.setText(expected);
+  }
+
+  const paragraph = rightCell.getChild(0).asParagraph();
+  paragraph.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+  paragraph.setIndentStart(0);
+  paragraph.setIndentEnd(0);
+  paragraph.setIndentFirstLine(0);
+  paragraph.setSpacingBefore(0);
+  paragraph.setSpacingAfter(0);
+
+  const text = paragraph.editAsText();
+  text.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
+  resetTextColorToAutomatic_(text);
+
+  const boldLabel = 'Equation ' + equationNumber;
+  const labelStart = expected.indexOf(boldLabel);
+
+  if (labelStart >= 0) {
+    text.setBold(labelStart, labelStart + boldLabel.length - 1, true);
+    text.setItalic(labelStart, labelStart + boldLabel.length - 1, false);
+  }
+
+  return {numberCorrected: numberCorrected};
+}
+
+/**
+ * Reindexes equation layout tables once and updates only the new equation and
+ * the equations that follow it.
+ */
+function renumberEquationTablesFromBodyIndex_(body, firstBodyIndex) {
+  const objectIndex = buildNeededDocumentIndex_(
+    body,
+    {
+      tableIndex: false,
+      figureIndex: false,
+      equationIndex: true
+    },
+    []
+  );
+  const numberByBodyIndex = {};
+  let renumbered = 0;
+
+  objectIndex.equationIndices.forEach(function(bodyIndex, position) {
+    const equationNumber = position + 1;
+    numberByBodyIndex[bodyIndex] = equationNumber;
+
+    if (bodyIndex < firstBodyIndex) return;
+
+    const element = body.getChild(bodyIndex);
+    if (!isEquationLayoutTable_(element.asTable())) return;
+
+    formatEquationLabel_(element.asTable().getRow(0).getCell(2), equationNumber);
+    renumbered++;
+  });
+
+  return {
+    renumbered: renumbered,
+    numberByBodyIndex: numberByBodyIndex
   };
 }
 
@@ -1368,6 +1467,8 @@ function isCountableCaptionTable_(element) {
 
 function formatSelectedTable() {
   const started = Date.now();
+  const doc = DocumentApp.getActiveDocument();
+  const body = getActiveBody_();
   const table = getActiveTable_();
 
   if (!table) {
@@ -1376,86 +1477,165 @@ function formatSelectedTable() {
     );
   }
 
-  const PT_PER_IN = 72;
-  const attribute = DocumentApp.Attribute;
-
-  const cellAttributes = {};
-  cellAttributes[attribute.VERTICAL_ALIGNMENT] =
-    DocumentApp.VerticalAlignment.CENTER;
-  cellAttributes[attribute.PADDING_TOP] = 0.028 * PT_PER_IN;
-  cellAttributes[attribute.PADDING_BOTTOM] = 0.028 * PT_PER_IN;
-  cellAttributes[attribute.PADDING_LEFT] = 0.028 * PT_PER_IN;
-  cellAttributes[attribute.PADDING_RIGHT] = 0.028 * PT_PER_IN;
-
-  const headerParagraphAttributes =
-    buildTableParagraphAttributes_(true, false, PT_PER_IN);
-  const bodyParagraphAttributes =
-    buildTableParagraphAttributes_(false, false, PT_PER_IN);
-  const headerListAttributes =
-    buildTableParagraphAttributes_(true, true, PT_PER_IN);
-  const bodyListAttributes =
-    buildTableParagraphAttributes_(false, true, PT_PER_IN);
-
-  table.setBorderColor('#000000');
-  table.setBorderWidth(1);
-
-  const rows = table.getNumRows();
-  let cells = 0;
-  let paragraphs = 0;
-  let listItems = 0;
-
-  for (let rowIndex = 0; rowIndex < rows; rowIndex++) {
-    const row = table.getRow(rowIndex);
-    const isHeader = rowIndex === 0;
-
-    row.setMinimumHeight(0.49 * PT_PER_IN);
-
-    const paragraphAttributes = isHeader
-      ? headerParagraphAttributes
-      : bodyParagraphAttributes;
-    const listAttributes = isHeader
-      ? headerListAttributes
-      : bodyListAttributes;
-
-    const cellCount = row.getNumCells();
-    cells += cellCount;
-
-    for (let cellIndex = 0; cellIndex < cellCount; cellIndex++) {
-      const cell = row.getCell(cellIndex);
-
-      cell.setAttributes(cellAttributes);
-      cell.setBackgroundColor(null);
-
-      for (
-        let childIndex = 0;
-        childIndex < cell.getNumChildren();
-        childIndex++
-      ) {
-        const child = cell.getChild(childIndex);
-        const type = child.getType();
-
-        if (type === DocumentApp.ElementType.PARAGRAPH) {
-          child.asParagraph().setAttributes(paragraphAttributes);
-          paragraphs++;
-        } else if (type === DocumentApp.ElementType.LIST_ITEM) {
-          child.asListItem().setAttributes(listAttributes);
-          listItems++;
-        }
-      }
-    }
+  const top = getTopLevelElementForParent_(table, body);
+  if (!top || top.getType() !== DocumentApp.ElementType.TABLE) {
+    throw new Error('Only body-level tables can be formatted.');
   }
+
+  const bodyIndex = body.getChildIndex(top);
+  const tableResult = formatTableElement_(table);
+  const pinPlan = buildTableHeaderPinPlan_(body, [bodyIndex]);
+
+  doc.saveAndClose();
+  const pinResult = executeTableHeaderPinPlan_(pinPlan);
 
   return {
     ok: true,
-    rows: rows,
-    cells: cells,
-    paragraphs: paragraphs,
-    listItems: listItems,
+    rows: tableResult.rows,
+    cells: tableResult.cells,
+    paragraphs: tableResult.paragraphs,
+    listItems: tableResult.listItems,
     listIndentLeftInches: 0,
     listHangingInches: 0.10,
-    usesDocsApi: false,
+    headerRowsPinned: pinResult.pinnedTables,
+    tableAlignment: 'UNCHANGED_NOT_EXPOSED_BY_GOOGLE_DOCS_API',
+    usesDocsApi: true,
     elapsedMs: Date.now() - started
   };
+}
+
+/**
+ * Resolves body-level table positions before DocumentApp is closed. The Docs
+ * API identifies a table by its structural start index, so table ordinals are
+ * used to bridge the two document models without scanning cell contents.
+ */
+function buildTableHeaderPinPlan_(body, bodyIndices) {
+  const requested = {};
+  (bodyIndices || []).forEach(function(index) {
+    requested[Number(index)] = true;
+  });
+
+  const tableOrdinals = [];
+  let tableOrdinal = 0;
+
+  for (let bodyIndex = 0; bodyIndex < body.getNumChildren(); bodyIndex++) {
+    const element = body.getChild(bodyIndex);
+    if (element.getType() !== DocumentApp.ElementType.TABLE) continue;
+
+    if (requested[bodyIndex] && !isEquationLayoutTable_(element.asTable())) {
+      tableOrdinals.push(tableOrdinal);
+    }
+
+    tableOrdinal++;
+  }
+
+  const doc = DocumentApp.getActiveDocument();
+
+  return {
+    documentId: doc.getId(),
+    tabId: getActiveDocumentTabId_(),
+    tableOrdinals: tableOrdinals
+  };
+}
+
+/**
+ * Pins the first row of all planned tables in one Docs API batch. This is the
+ * only supported public operation that makes a header row repeat across pages.
+ */
+function executeTableHeaderPinPlan_(plan) {
+  const tableOrdinals = plan && plan.tableOrdinals
+    ? plan.tableOrdinals
+    : [];
+
+  if (!tableOrdinals.length) {
+    return {pinnedTables: 0, usesDocsApi: false};
+  }
+
+  if (typeof Docs === 'undefined' || !Docs.Documents) {
+    throw new Error(
+      'The Advanced Google Docs service is required to pin table header rows.'
+    );
+  }
+
+  const apiDocument = Docs.Documents.get(plan.documentId, {
+    includeTabsContent: true
+  });
+  const apiTab = getApiDocumentTab_(apiDocument, plan.tabId);
+  const apiTables = (apiTab.body.content || []).filter(function(element) {
+    return element && element.table;
+  });
+  const requests = [];
+
+  tableOrdinals.forEach(function(tableOrdinal) {
+    const structural = apiTables[tableOrdinal];
+
+    if (!structural || !Number.isFinite(Number(structural.startIndex))) {
+      throw new Error(
+        'Could not resolve a selected table in the Google Docs API structure.'
+      );
+    }
+
+    const tableStartLocation = {
+      index: Number(structural.startIndex)
+    };
+
+    if (plan.tabId) {
+      tableStartLocation.tabId = plan.tabId;
+    }
+
+    requests.push({
+      pinTableHeaderRows: {
+        tableStartLocation: tableStartLocation,
+        pinnedHeaderRowsCount: 1
+      }
+    });
+  });
+
+  Docs.Documents.batchUpdate(
+    {requests: requests},
+    plan.documentId
+  );
+
+  return {
+    pinnedTables: requests.length,
+    usesDocsApi: true
+  };
+}
+
+function getActiveDocumentTabId_() {
+  try {
+    const tab = DocumentApp.getActiveDocument().getActiveTab();
+    return tab && tab.getId ? tab.getId() : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function getApiDocumentTab_(apiDocument, activeTabId) {
+  const found = findApiTabById_(apiDocument.tabs || [], activeTabId);
+  if (found && found.documentTab) return found.documentTab;
+
+  if (apiDocument.body) return apiDocument;
+
+  throw new Error(
+    'Could not read the active Google Docs tab through the Docs API.'
+  );
+}
+
+function findApiTabById_(tabs, tabId) {
+  for (let index = 0; index < (tabs || []).length; index++) {
+    const tab = tabs[index];
+    const properties = tab.tabProperties || {};
+
+    if (!tabId || String(properties.tabId || '') === String(tabId)) {
+      return tab;
+    }
+
+    const childMatch = findApiTabById_(tab.childTabs || [], tabId);
+    if (childMatch) return childMatch;
+  }
+
+  return null;
 }
 
 function getActiveTable_() {
@@ -1513,7 +1693,7 @@ function buildTableParagraphAttributes_(
   attributes[attribute.HORIZONTAL_ALIGNMENT] = isHeader
     ? DocumentApp.HorizontalAlignment.CENTER
     : DocumentApp.HorizontalAlignment.LEFT;
-  attributes[attribute.LINE_SPACING] = 1;
+  attributes[attribute.LINE_SPACING] = isListItem ? 1.5 : 1;
   attributes[attribute.SPACING_BEFORE] = 0;
   attributes[attribute.SPACING_AFTER] = 0;
   attributes[attribute.INDENT_END] = 0;
@@ -1532,6 +1712,7 @@ function buildTableParagraphAttributes_(
   attributes[attribute.FONT_FAMILY] = 'Arial';
   attributes[attribute.FONT_SIZE] = 9;
   attributes[attribute.BOLD] = Boolean(isHeader);
+  attributes[attribute.FOREGROUND_COLOR] = null;
 
   return attributes;
 }
@@ -1576,14 +1757,91 @@ function formatCaptionLine(captionType) {
     ? {description: parsed.description}
     : parseCaptionDescriptionOnly_(original);
 
-  const nextNumber = getCaptionOrdinal_(p, forcedType);
-  formatCaptionParagraph_(p, forcedType, content.description, nextNumber);
+  const renumberResult = formatCaptionAndFollowing_(
+    p,
+    forcedType,
+    content.description
+  );
 
   return {
     ok: true,
     type: forcedType,
-    number: nextNumber,
-    text: p.getText()
+    number: renumberResult.number,
+    text: p.getText(),
+    followingCaptionsRenumbered:
+      renumberResult.followingCaptionsRenumbered,
+    elapsedMs: renumberResult.elapsedMs
+  };
+}
+
+/**
+ * Formats the selected caption and reenumerates only later captions of the
+ * same type. The table/figure index is built once for the whole operation.
+ */
+function formatCaptionAndFollowing_(targetParagraph, type, description) {
+  const started = Date.now();
+  const body = getActiveBody_();
+  const targetIndex = body.getChildIndex(targetParagraph);
+  const requirements = {
+    tableIndex: type === 'Table',
+    figureIndex: type === 'Figure',
+    equationIndex: false
+  };
+  const objectIndex = buildNeededDocumentIndex_(
+    body,
+    requirements,
+    []
+  );
+
+  let number = getIndexedCaptionOrdinal_(
+    targetParagraph,
+    type,
+    targetIndex,
+    body,
+    objectIndex
+  );
+
+  // Preserve the established manual behavior for a caption before a custom
+  // anchor, while bulk updates continue to leave pre-anchor captions alone.
+  if (number === null || number === undefined) {
+    number = getCaptionOrdinal_(targetParagraph, type);
+  }
+
+  formatCaptionParagraph_(targetParagraph, type, description, number);
+
+  let followingCaptionsRenumbered = 0;
+
+  for (let bodyIndex = targetIndex + 1; bodyIndex < body.getNumChildren(); bodyIndex++) {
+    const element = body.getChild(bodyIndex);
+    if (element.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+
+    const paragraph = element.asParagraph();
+    const parsed = parseCaptionLine_(paragraph.getText());
+    if (!parsed || parsed.type !== type) continue;
+
+    const followingNumber = getIndexedCaptionOrdinal_(
+      paragraph,
+      type,
+      bodyIndex,
+      body,
+      objectIndex
+    );
+
+    if (followingNumber === null || followingNumber === undefined) continue;
+
+    formatCaptionParagraph_(
+      paragraph,
+      type,
+      parsed.description,
+      followingNumber
+    );
+    followingCaptionsRenumbered++;
+  }
+
+  return {
+    number: number,
+    followingCaptionsRenumbered: followingCaptionsRenumbered,
+    elapsedMs: Date.now() - started
   };
 }
 
@@ -1690,6 +1948,7 @@ function formatNoteParagraph_(p, description) {
   t.setFontFamily('Arial');
   t.setFontSize(9);
   t.setBold(false);
+  resetTextColorToAutomatic_(t);
 
   const prefix = 'Note.';
   t.setBold(0, prefix.length - 1, true);
@@ -1761,8 +2020,12 @@ function formatCaptionParagraph_(p, type, description, number) {
   t.setFontFamily('Arial');
   t.setFontSize(9);
   t.setBold(false);
+  t.setItalic(false);
+  resetTextColorToAutomatic_(t);
 
-  const prefix = type + ' ' + number + '.';
+  // One continuous rich-text range produces **Table 1**, not two adjacent
+  // runs such as **Table** **1** when exported to Markdown-like notation.
+  const prefix = type + ' ' + number;
   if (prefix.length) {
     t.setBold(0, prefix.length - 1, true);
   }
@@ -2096,7 +2359,17 @@ function getAnchoredObjectOrdinal_(type, parent, objectIndex) {
 }
 
 function renumberAllCaptions() {
+  const started = Date.now();
   const body = getActiveBody_();
+  const objectIndex = buildNeededDocumentIndex_(
+    body,
+    {
+      tableIndex: true,
+      figureIndex: true,
+      equationIndex: false
+    },
+    []
+  );
   let tables = 0;
   let figures = 0;
   let skippedBeforeAnchor = 0;
@@ -2112,7 +2385,13 @@ function renumberAllCaptions() {
 
     if (!parsed || (parsed.type !== 'Table' && parsed.type !== 'Figure')) continue;
 
-    const ordinal = getCaptionOrdinal_(p, parsed.type);
+    const ordinal = getIndexedCaptionOrdinal_(
+      p,
+      parsed.type,
+      i,
+      body,
+      objectIndex
+    );
 
     if (ordinal === null || ordinal === undefined) {
       skippedBeforeAnchor++;
@@ -2128,7 +2407,10 @@ function renumberAllCaptions() {
   return {
     tables: tables,
     figures: figures,
-    skippedBeforeAnchor: skippedBeforeAnchor
+    skippedBeforeAnchor: skippedBeforeAnchor,
+    tableIndexMs: objectIndex.tableIndexMs,
+    figureIndexMs: objectIndex.figureIndexMs,
+    elapsedMs: Date.now() - started
   };
 }
 

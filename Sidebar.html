@@ -58,7 +58,7 @@
           <button class="btn-list" title="Letters" onclick="list('LETTER',event)">a.</button>
           <button class="btn-list" title="Roman numerals" onclick="list('ROMAN',event)">I.</button>
         </div>
-        <div class="smartHint listHint">Applies a native automatic list to the selected paragraphs or to the paragraph at the cursor.</div>
+        <div class="smartHint listHint">Applies a native automatic list with 1.5 line spacing to the selected paragraphs or to the paragraph at the cursor.</div>
       </div>
 
       <div class="group">
@@ -121,7 +121,7 @@
       <div class="group">
         <label>TABLE</label>
         <button class="wide btn-table" onclick="formatTable(event)">▦ Format selected table</button>
-        <div class="smartHint">Formats the table containing the cursor or selection. The first row is treated as the header.</div>
+        <div class="smartHint">Formats the table containing the cursor or selection. The first row is bold, centered and pinned as a repeating header.</div>
       </div>
 
       <div class="group">
@@ -222,7 +222,7 @@
         </button>
 
         <div class="smartHint">
-          Runs the isolated function currently configured in TestFunctions.gs.
+          Audits list spacing, caption/equation numbering, continuous bold labels, Equation italics and the selected table header without changing the document.
         </div>
 
         <textarea

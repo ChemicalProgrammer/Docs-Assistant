@@ -2,7 +2,8 @@
  * Deterministic selected-section formatter.
  *
  * Production engine used by the “Format selected styles” button.
- * Uses only DocumentApp and the existing fast local formatters.
+ * Uses the fast local formatters. The only advanced-API operation is one
+ * optional batch that pins the first row of selected real tables.
  */
 function formatSelectedSection_() {
   const started = Date.now();
@@ -30,7 +31,7 @@ function formatSelectedSection_() {
 
   const report = {
     ok: true,
-    engineId: 'DETERMINISTIC-SECTION-FORMAT-V4',
+    engineId: 'DETERMINISTIC-SECTION-FORMAT-V6',
     normal: 0,
     blank: 0,
     headings: 0,
@@ -51,6 +52,7 @@ function formatSelectedSection_() {
   };
 
   const listActions = [];
+  const selectedTableBodyIndices = [];
   const mainFormattingStarted = Date.now();
 
   selectionPlan.entries.forEach(function(entry) {
@@ -58,27 +60,13 @@ function formatSelectedSection_() {
     const bodyIndex = entry.bodyIndex;
 
     if (entry.kind === 'EQUATION_TABLE') {
-      const equationNumber = objectIndex.equationNumberByBodyIndex[bodyIndex];
-
-      if (!equationNumber) {
-        throw new Error('Could not resolve the selected equation number.');
-      }
-
-      const equationResult = formatEquationLayoutNumber_(
-        element.asTable(),
-        equationNumber
-      );
-
       report.equations++;
-      if (equationResult.numberCorrected) {
-        report.equationNumbersCorrected++;
-      }
-
       return;
     }
 
     if (entry.kind === 'TABLE') {
       const tableResult = formatTableElement_(element.asTable());
+      selectedTableBodyIndices.push(bodyIndex);
       report.tables++;
       report.tableCells += tableResult.cells;
       return;
@@ -160,6 +148,28 @@ function formatSelectedSection_() {
     }
   });
 
+  if (selectionPlan.selectedEquationEntries.length) {
+    const firstSelectedEquationIndex = Math.min.apply(
+      null,
+      selectionPlan.selectedEquationEntries.map(function(entry) {
+        return entry.bodyIndex;
+      })
+    );
+
+    objectIndex.equationIndices.forEach(function(bodyIndex, position) {
+      if (bodyIndex < firstSelectedEquationIndex) return;
+
+      const equationResult = formatEquationLabel_(
+        body.getChild(bodyIndex).asTable().getRow(0).getCell(2),
+        position + 1
+      );
+
+      if (equationResult.numberCorrected) {
+        report.equationNumbersCorrected++;
+      }
+    });
+  }
+
   const mainFormattingMs = Date.now() - mainFormattingStarted;
   const listFormattingStarted = Date.now();
 
@@ -184,9 +194,20 @@ function formatSelectedSection_() {
   });
 
   const listFormattingMs = Date.now() - listFormattingStarted;
+  const headerPinPlan = buildTableHeaderPinPlan_(
+    body,
+    selectedTableBodyIndices
+  );
   const saveStarted = Date.now();
   doc.saveAndClose();
   const saveMs = Date.now() - saveStarted;
+  const headerPinStarted = Date.now();
+  const headerPinResult = executeTableHeaderPinPlan_(headerPinPlan);
+  const headerPinMs = Date.now() - headerPinStarted;
+
+  report.usesAdvancedDocsApi = headerPinResult.usesDocsApi;
+  report.tableHeaderRowsPinned = headerPinResult.pinnedTables;
+  report.tableAlignment = 'UNCHANGED_NOT_EXPOSED_BY_GOOGLE_DOCS_API';
 
   report.selectedBodyElements = selectionPlan.entries.length;
   report.tableIndexBuilt = selectionPlan.requirements.tableIndex;
@@ -212,6 +233,7 @@ function formatSelectedSection_() {
   report.mainFormattingMs = mainFormattingMs;
   report.listFormattingMs = listFormattingMs;
   report.saveMs = saveMs;
+  report.tableHeaderPinMs = headerPinMs;
   report.elapsedMs = Date.now() - started;
 
   return report;
@@ -741,6 +763,8 @@ function formatTableElement_(table) {
   table.setBorderWidth(1);
 
   let cells = 0;
+  let paragraphs = 0;
+  let listItems = 0;
 
   for (let rowIndex = 0; rowIndex < table.getNumRows(); rowIndex++) {
     const row = table.getRow(rowIndex);
@@ -760,45 +784,30 @@ function formatTableElement_(table) {
           child.asParagraph().setAttributes(
             isHeader ? headerParagraph : bodyParagraph
           );
+          paragraphs++;
         } else if (child.getType() === DocumentApp.ElementType.LIST_ITEM) {
           child.asListItem().setAttributes(
             isHeader ? headerList : bodyList
           );
+          listItems++;
         }
       }
     }
   }
 
-  return {cells: cells};
+  return {
+    rows: table.getNumRows(),
+    cells: cells,
+    paragraphs: paragraphs,
+    listItems: listItems
+  };
 }
 
 function formatEquationLayoutNumber_(table, equationNumber) {
-  const row = table.getRow(0);
-  const rightCell = row.getCell(2);
-  const expected = '.................... Equation ' + equationNumber;
-  const current = String(rightCell.getText() || '').trim();
-  const numberCorrected = current !== expected;
-
-  if (numberCorrected) {
-    rightCell.setText(expected);
-  }
-
-  const paragraph = rightCell.getChild(0).asParagraph();
-  paragraph.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
-  paragraph.setIndentStart(0);
-  paragraph.setIndentEnd(0);
-  paragraph.setIndentFirstLine(0);
-  paragraph.setSpacingBefore(0);
-  paragraph.setSpacingAfter(0);
-
-  const text = paragraph.editAsText();
-  text.setFontFamily('Arial').setFontSize(9).setBold(false).setItalic(false);
-
-  const labelStart = expected.indexOf('Equation ');
-  text.setBold(labelStart, expected.length - 1, true);
-  text.setItalic(labelStart, expected.length - 1, true);
-
-  return {numberCorrected: numberCorrected};
+  return formatEquationLabel_(
+    table.getRow(0).getCell(2),
+    equationNumber
+  );
 }
 
 function getIndexedCaptionOrdinal_(
@@ -871,4 +880,3 @@ function findNearestIndexPosition_(indices, referenceIndex, preferAfter) {
 
   return bestPosition;
 }
-
