@@ -2033,8 +2033,10 @@ function formatCaptionLine(captionType) {
     text: p.getText(),
     followingCaptionsRenumbered:
       renumberResult.followingCaptionsRenumbered,
-    objectsIndexed: renumberResult.objectsIndexed,
-    anchorBodyIndex: renumberResult.anchorBodyIndex,
+    followingCaptionsChecked:
+      renumberResult.followingCaptionsChecked,
+    captionsCountedThroughTarget:
+      renumberResult.captionsCountedThroughTarget,
     numberingBasis: renumberResult.numberingBasis,
     positionPreserved: renumberResult.positionPreserved,
     elapsedMs: renumberResult.elapsedMs
@@ -2042,36 +2044,21 @@ function formatCaptionLine(captionType) {
 }
 
 /**
- * Formats the selected caption and reenumerates only later captions of the
- * same type. The table/figure index is built once for the whole operation.
+ * Formats the selected caption and reenumerates later captions of the same
+ * type. Figure uses the direct caption sequence; Table keeps the physical
+ * table index approved in V6.5/V6.6.
  */
 function formatCaptionAndFollowing_(targetParagraph, type, description) {
+  if (type === 'Figure') {
+    return formatFigureCaptionAndFollowingFast_(
+      targetParagraph,
+      description
+    );
+  }
+
   const started = Date.now();
   const body = getActiveBody_();
   const targetIndex = body.getChildIndex(targetParagraph);
-  let localFigureMarker = {
-    bodyIndex: -1,
-    markerAdded: false
-  };
-
-  // A newly inserted positioned image or drawing is not returned by
-  // Body.getImages(). Discover the Figure associated with the active caption
-  // locally and persist its marker before building the complete index.
-  if (type === 'Figure') {
-    const associatedFigureIndex = findCaptionObjectBodyIndex_(
-      'Figure',
-      body,
-      targetIndex
-    );
-
-    if (associatedFigureIndex >= 0) {
-      localFigureMarker = ensurePersistentFigureBlockMarker_(
-        body,
-        body.getChild(associatedFigureIndex)
-      );
-    }
-  }
-
   const requirements = {
     tableIndex: type === 'Table',
     figureIndex: type === 'Figure',
@@ -2129,22 +2116,140 @@ function formatCaptionAndFollowing_(targetParagraph, type, description) {
   }
 
   const finalTargetIndex = body.getChildIndex(targetParagraph);
-  const objectsIndexed = type === 'Table'
-    ? objectIndex.tableIndices.length
-    : objectIndex.figureIndices.length;
-  const anchorBodyIndex = getCaptionCounterAnchorIndex_(type, body);
-  const numberingBasis =
-    type === 'Figure' && anchorBodyIndex >= 0
-      ? 'FIGURE_CAPTIONS_FROM_ANCHOR'
-      : 'DOCUMENT_OBJECTS';
 
   return {
     number: number,
     followingCaptionsRenumbered: followingCaptionsRenumbered,
-    objectsIndexed: objectsIndexed,
-    anchorBodyIndex: anchorBodyIndex,
+    positionPreserved: finalTargetIndex === targetIndex,
+    originalBodyIndex: targetIndex,
+    finalBodyIndex: finalTargetIndex,
+    elapsedMs: Date.now() - started
+  };
+}
+
+/**
+ * Fast deterministic Figure-caption formatter.
+ *
+ * Figure numbering follows caption lines, not physical image blocks. This is
+ * intentional: one logical figure may contain several images, and a stray
+ * visual object must not turn the second caption into Figure 3.
+ *
+ * The active line always participates in the sequence, even when it is still
+ * Normal text or contains an incorrect prefix such as "Figure 9". After the
+ * active line is corrected, every later paragraph already recognizable as a
+ * Figure caption is renumbered in one forward pass.
+ */
+function formatFigureCaptionAndFollowingFast_(
+  targetParagraph,
+  description
+) {
+  const started = Date.now();
+  const body = getActiveBody_();
+  const targetIndex = body.getChildIndex(targetParagraph);
+  const anchorIndex = getCaptionCounterAnchorIndex_(
+    'Figure',
+    body
+  );
+  const startAt = getCaptionCounterStart_('Figure');
+  let number = 1;
+  let captionsCounted = 0;
+  let numberingBasis = 'FIGURE_CAPTIONS_FROM_DOCUMENT_START';
+
+  if (anchorIndex >= 0 && targetIndex >= anchorIndex) {
+    numberingBasis = 'FIGURE_CAPTIONS_FROM_ANCHOR';
+
+    for (
+      let bodyIndex = anchorIndex;
+      bodyIndex <= targetIndex;
+      bodyIndex++
+    ) {
+      const element = body.getChild(bodyIndex);
+      const isParagraph =
+        element.getType() === DocumentApp.ElementType.PARAGRAPH;
+      const parsed = isParagraph
+        ? parseCaptionLine_(element.getText())
+        : null;
+
+      // The anchor and active lines are captions by explicit user action,
+      // even if either line has not yet received a Figure prefix.
+      if (
+        bodyIndex === anchorIndex ||
+        bodyIndex === targetIndex ||
+        (parsed && parsed.type === 'Figure')
+      ) {
+        captionsCounted++;
+      }
+    }
+
+    number = startAt + Math.max(1, captionsCounted) - 1;
+  } else {
+    // No anchor, or the active line is before it: use only earlier Figure
+    // captions. No image inspection or marker migration is required.
+    for (let bodyIndex = 0; bodyIndex < targetIndex; bodyIndex++) {
+      const element = body.getChild(bodyIndex);
+      if (element.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+
+      const parsed = parseCaptionLine_(element.getText());
+      if (parsed && parsed.type === 'Figure') captionsCounted++;
+    }
+
+    number = captionsCounted + 1;
+  }
+
+  // The visible active result is applied before scanning later captions.
+  formatCaptionParagraph_(
+    targetParagraph,
+    'Figure',
+    description,
+    number
+  );
+
+  let followingCaptionsRenumbered = 0;
+  let followingCaptionsChecked = 0;
+  let nextNumber = number;
+  const stopBeforeIndex =
+    anchorIndex >= 0 && targetIndex < anchorIndex
+      ? anchorIndex
+      : body.getNumChildren();
+
+  for (
+    let bodyIndex = targetIndex + 1;
+    bodyIndex < stopBeforeIndex;
+    bodyIndex++
+  ) {
+    const element = body.getChild(bodyIndex);
+    if (element.getType() !== DocumentApp.ElementType.PARAGRAPH) continue;
+
+    const paragraph = element.asParagraph();
+    const parsed = parseCaptionLine_(paragraph.getText());
+    if (!parsed || parsed.type !== 'Figure') continue;
+
+    nextNumber++;
+    followingCaptionsChecked++;
+
+    // Correct captions need no write operation. Skipping them is important in
+    // large documents because Google Docs writes are much slower than reads.
+    if (String(parsed.oldNumber || '') === String(nextNumber)) {
+      continue;
+    }
+
+    formatCaptionParagraph_(
+      paragraph,
+      'Figure',
+      parsed.description,
+      nextNumber
+    );
+    followingCaptionsRenumbered++;
+  }
+
+  const finalTargetIndex = body.getChildIndex(targetParagraph);
+
+  return {
+    number: number,
+    followingCaptionsRenumbered: followingCaptionsRenumbered,
+    followingCaptionsChecked: followingCaptionsChecked,
+    captionsCountedThroughTarget: captionsCounted,
     numberingBasis: numberingBasis,
-    localFigureMarkerAdded: localFigureMarker.markerAdded,
     positionPreserved: finalTargetIndex === targetIndex,
     originalBodyIndex: targetIndex,
     finalBodyIndex: finalTargetIndex,
@@ -2465,24 +2570,18 @@ function setCaptionCounterAnchor(type, startAt) {
     normalized === 'Table' &&
     topType === DocumentApp.ElementType.TABLE &&
     isCountableCaptionTable_(top);
-  const isFigureObject =
-    normalized === 'Figure' &&
-    isStandaloneFigureBlock_(top);
 
-  if (!isCaptionParagraph && !isTableObject && !isFigureObject) {
+  if (!isCaptionParagraph && !isTableObject) {
     throw new Error(
       normalized === 'Table'
         ? 'Place the cursor on the Table caption or inside the table, then press Set here.'
-        : 'Place the cursor on the Figure caption or image paragraph, then press Set here.'
+        : 'Place the cursor on the Figure caption line, then press Set here.'
     );
   }
 
   const config = CAPTION_COUNTER_CONFIG_[normalized];
   removeNamedRangesByName_(config.anchorName);
 
-  // A NamedRange is most reliable on text. When the cursor is inside a table,
-  // anchor its owning cell paragraph; resolving the range later returns the
-  // body-level table index.
   const rangeElement = isTableObject
     ? (getOwningParagraph_(reference) || reference)
     : top;
@@ -2491,35 +2590,12 @@ function setCaptionCounterAnchor(type, startAt) {
   const props = PropertiesService.getDocumentProperties();
   if (props) props.setProperty(config.startProperty, String(start));
 
-  const anchorBodyIndex = body.getChildIndex(top);
-  const anchorObjectBodyIndex = findCaptionObjectBodyIndex_(
-    normalized,
-    body,
-    anchorBodyIndex
-  );
-  let figureMarkerAdded = false;
-
-  // Direct inline images are collected on every run. This marker additionally
-  // covers a newly inserted positioned image or InlineDrawing at the anchor.
-  if (normalized === 'Figure' && anchorObjectBodyIndex >= 0) {
-    figureMarkerAdded = ensurePersistentFigureBlockMarker_(
-      body,
-      body.getChild(anchorObjectBodyIndex)
-    ).markerAdded;
-  }
-
   return {
     type: normalized,
     startAt: start,
     anchorSet: true,
-    anchorBodyIndex: anchorBodyIndex,
-    anchorObjectBodyIndex: anchorObjectBodyIndex,
-    figureMarkerAdded: figureMarkerAdded,
-    anchorTarget: isTableObject
-      ? 'TABLE'
-      : isFigureObject
-        ? 'FIGURE'
-        : 'CAPTION'
+    anchorBodyIndex: body.getChildIndex(top),
+    anchorTarget: isTableObject ? 'TABLE' : 'CAPTION'
   };
 }
 
@@ -2604,37 +2680,30 @@ function getCaptionCounterAnchorObjectIndex_(type, parent) {
   const anchorLineIndex = getCaptionCounterAnchorIndex_(normalized, parent);
   if (anchorLineIndex < 0) return -1;
 
-  return findCaptionObjectBodyIndex_(
-    normalized,
-    parent,
-    anchorLineIndex
-  );
-}
+  if (normalized === 'Figure') {
+    // Figure captions are above their images. A positioned image may be
+    // anchored to the same paragraph, so equality is intentionally accepted.
+    for (let i = anchorLineIndex; i < parent.getNumChildren(); i++) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) return i;
+    }
 
-function findCaptionObjectBodyIndex_(type, parent, referenceIndex) {
-  const normalized = normalizeCaptionCounterType_(type);
+    // Fallback for legacy documents whose captions are still below images.
+    for (let i = anchorLineIndex - 1; i >= 0; i--) {
+      if (isStandaloneFigureBlock_(parent.getChild(i))) return i;
+    }
 
-  // Both Table and Figure captions belong above their object. Equality is
-  // accepted for an anchor set inside a table or on a positioned image.
-  for (let i = referenceIndex; i < parent.getNumChildren(); i++) {
-    const child = parent.getChild(i);
-    const matches =
-      normalized === 'Table'
-        ? isCountableCaptionTable_(child)
-        : isStandaloneFigureBlock_(child);
-
-    if (matches) return i;
+    return -1;
   }
 
-  // Fallback for legacy captions that remain below their object.
-  for (let i = referenceIndex - 1; i >= 0; i--) {
-    const child = parent.getChild(i);
-    const matches =
-      normalized === 'Table'
-        ? isCountableCaptionTable_(child)
-        : isStandaloneFigureBlock_(child);
+  // Table captions are above their table. Equality supports an anchor set
+  // directly from inside the table.
+  for (let i = anchorLineIndex; i < parent.getNumChildren(); i++) {
+    if (isCountableCaptionTable_(parent.getChild(i))) return i;
+  }
 
-    if (matches) return i;
+  // Fallback for legacy captions that remain below their table.
+  for (let i = anchorLineIndex - 1; i >= 0; i--) {
+    if (isCountableCaptionTable_(parent.getChild(i))) return i;
   }
 
   return -1;
@@ -2802,7 +2871,7 @@ function renumberAllCaptions() {
  * the number already written in caption text.
  *
  * The caption belongs to the first actual TABLE element at or after it. A
- * previous-table fallback is retained for legacy captions that remain below.
+ * previous-table fallback is retained for legacy captions below their table.
  *
  * If no actual table can be found, we safely fall back to counting prior
  * Table caption paragraphs.

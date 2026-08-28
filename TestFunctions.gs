@@ -1,5 +1,5 @@
 /**
- * TEST LAB V6.8
+ * TEST LAB V6.5 FIGURE HOTFIX
  *
  * Non-destructive audit for the production formatting rules. Place the cursor
  * in a caption, equation table, real table, or select list paragraphs.
@@ -16,9 +16,16 @@ function runCurrentTest() {
 
   const report = {
     ok: true,
-    testId: 'FORMATTING-COMPLIANCE-V6.8',
+    testId: 'FORMATTING-COMPLIANCE-V6.5-FIGURE-HOTFIX',
     visibleContentMutations: false,
     mayCreateInternalIndexMarkers: true,
+    figureButtonMode: {
+      numberingBasis: 'CAPTION_LINES',
+      buildsImageIndex: false,
+      acceptsPlainText: true,
+      replacesWrongExistingNumber: true,
+      renumbersLaterFigureCaptions: true
+    },
     equationRowUpdateMode: {
       supported: true,
       behavior:
@@ -309,9 +316,6 @@ function auditCaptionAndEquationSequences_(body) {
     ok: mismatches.length === 0,
     captionsAudited: captions,
     equationsAudited: objectIndex.equationIndices.length,
-    figuresIndexed: objectIndex.figureIndices.length,
-    inlineImagesCollected: objectIndex.figureImageCollectionCount,
-    directInlineFigureBlocks: objectIndex.figureDirectBlockCount,
     mismatches: mismatches,
     tableIndexMs: objectIndex.tableIndexMs,
     figureIndexMs: objectIndex.figureIndexMs

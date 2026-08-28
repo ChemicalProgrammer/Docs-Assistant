@@ -307,18 +307,15 @@ function formatCaption(type,e){
      r=r||{};
      const label=type==='figure'?'Figure':'Table';
      const following=r.followingCaptionsRenumbered||0;
-     const indexed=r.objectsIndexed||0;
+     const checked=r.followingCaptionsChecked;
      const parts=[
        `${label} ${r.number||''} formatted`,
-       `${following} following renumbered`
+       checked===undefined
+         ? `${following} following renumbered`
+         : `${following} of ${checked||0} following renumbered`
      ];
-     if(
-       type==='figure'&&
-       r.numberingBasis==='FIGURE_CAPTIONS_FROM_ANCHOR'
-     ){
+     if(type==='figure'&&r.numberingBasis==='FIGURE_CAPTIONS_FROM_ANCHOR'){
        parts.push('caption sequence from anchor');
-     }else if(indexed){
-       parts.push(`${indexed} ${type==='table'?'tables':'figures'} indexed`);
      }
      endTask(
        true,
@@ -334,9 +331,11 @@ function setCaptionAnchor(type,e){
  if(!Number.isFinite(start)||start<1){status('Start at must be 1 or greater.');return;}
  if(!beginTask(e.currentTarget,'Setting…'))return;
  google.script.run
-   .withSuccessHandler(()=>{
-     refreshCaptionNumberingSettings();
-     endTask(true,(type==='table'?'Table':'Figure')+' counter anchor set');
+   .withSuccessHandler(r=>{
+     r=r||{};
+     const state=document.getElementById(type==='table'?'tableCounterState':'figureCounterState');
+     if(state)state.textContent=`Anchor set · ${r.startAt||start}`;
+     endTask(true,(type==='table'?'Table':'Figure')+' counter anchor set · no captions changed');
    })
    .withFailureHandler(fail)
    .setCaptionCounterAnchor(type,start);
@@ -344,8 +343,12 @@ function setCaptionAnchor(type,e){
 function clearCaptionAnchor(type,e){
  if(!beginTask(e.currentTarget,'…'))return;
  google.script.run
-   .withSuccessHandler(()=>{
-     refreshCaptionNumberingSettings();
+   .withSuccessHandler(r=>{
+     r=r||{};
+     const state=document.getElementById(type==='table'?'tableCounterState':'figureCounterState');
+     if(state)state.textContent=`Document start · ${r.startAt||1}`;
+     const input=document.getElementById(type==='table'?'tableCounterStart':'figureCounterStart');
+     if(input)input.value=r.startAt||1;
      endTask(true,(type==='table'?'Table':'Figure')+' counter reset to document start');
    })
    .withFailureHandler(fail)
