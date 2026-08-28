@@ -2004,12 +2004,6 @@ function formatCaptionLine(captionType) {
   if (p.getType() === DocumentApp.ElementType.LIST_ITEM) {
     throw new Error('Captions cannot be list items.');
   }
-  if (forcedType === 'Figure' && paragraphContainsInlineFigure_(p)) {
-    throw new Error(
-      'Place the cursor in a separate caption line above the inline image. The image paragraph will not be modified.'
-    );
-  }
-
   const original = p.getText();
 
   // If the line already starts with Figure/Table, strip that existing prefix.
@@ -2422,21 +2416,25 @@ function formatCaptionParagraph_(p, type, description, number) {
   if (isInsideTable_(p)) {
     throw new Error('Caption formatting is not allowed inside a table.');
   }
-  if (type === 'Figure' && paragraphContainsInlineFigure_(p)) {
-    throw new Error(
-      'A Figure caption must use a separate paragraph above the inline image.'
-    );
-  }
   const captionText = type + ' ' + number + '. ' + String(description || '').trim();
   const verticalLayout = type === 'Figure'
     ? captureCaptionVerticalLayout_(p)
     : null;
+  const preserveInlineFigure =
+    type === 'Figure' &&
+    paragraphContainsInlineFigure_(p);
 
   // Start from CURRENT Normal text style, then apply caption overrides.
   applyNamedStyleToParagraph_(p, 'NORMAL');
 
-  const t = p.editAsText();
-  t.setText(captionText);
+  // Google Docs can render caption text above an image even when both are
+  // children of the same Paragraph. editAsText().setText() would risk
+  // removing that inline image. In that layout, replace only direct Text
+  // children and leave InlineImage/InlineDrawing elements untouched.
+  const t = preserveInlineFigure
+    ? replaceCaptionTextPreservingInlineFigures_(p, captionText)
+    : p.editAsText().setText(captionText);
+
   t.setFontFamily('Arial');
   t.setFontSize(9);
   t.setBold(false);
@@ -2452,6 +2450,63 @@ function formatCaptionParagraph_(p, type, description, number) {
 
   p.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
   restoreCaptionVerticalLayout_(p, verticalLayout);
+}
+
+/**
+ * Replaces the visible caption portion of a mixed text/image paragraph while
+ * preserving every non-text child in its original position.
+ */
+function replaceCaptionTextPreservingInlineFigures_(
+  paragraph,
+  captionText
+) {
+  const textChildren = [];
+  let firstVisualIndex = Number.MAX_SAFE_INTEGER;
+  let primaryText = null;
+  let primaryTextIndex = -1;
+
+  for (let index = 0; index < paragraph.getNumChildren(); index++) {
+    const child = paragraph.getChild(index);
+    const childType = child.getType();
+
+    if (
+      childType === DocumentApp.ElementType.INLINE_IMAGE ||
+      childType === DocumentApp.ElementType.INLINE_DRAWING
+    ) {
+      if (firstVisualIndex === Number.MAX_SAFE_INTEGER) {
+        firstVisualIndex = index;
+      }
+      continue;
+    }
+
+    if (childType === DocumentApp.ElementType.TEXT) {
+      const text = child.asText();
+      textChildren.push({
+        index: index,
+        text: text
+      });
+      if (!primaryText && index < firstVisualIndex) {
+        primaryText = text;
+        primaryTextIndex = index;
+      }
+    }
+  }
+
+  if (primaryText) {
+    primaryText.setText(captionText);
+  } else {
+    // No Text child precedes the image. Insert one at child index 0 so the
+    // caption remains above/before the visual object without moving it.
+    primaryText = paragraph.insertText(0, captionText);
+  }
+
+  textChildren.forEach(function(entry) {
+    if (entry.index !== primaryTextIndex) {
+      entry.text.setText('');
+    }
+  });
+
+  return primaryText;
 }
 
 /**
